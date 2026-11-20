@@ -1,6 +1,6 @@
 {
   "name": "chatluna-diary",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "Per-preset diary, conversation digest, stacked brush marks, media and scheduled writing for ChatLuna v2 WebUI.",
   "type": "module",
   "license": "MIT",

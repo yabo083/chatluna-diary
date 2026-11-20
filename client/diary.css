@@ -276,6 +276,32 @@ button.diary-meta-badge.is-interactive:active {
   z-index: 1;
 }
 
+/* The brush mark carries its own numeral. `container-type: inline-size` makes
+   the digit scale with whatever box the mark was given (15px cell, 46px lab). */
+.paper-mark {
+  container-type: inline-size;
+}
+
+.paper-mark-digit {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: currentColor;
+  font-family: 'M PLUS Rounded 1c', 'Nunito', 'Quicksand', 'Varela Round',
+    'Arial Rounded MT Bold', ui-rounded, sans-serif;
+  font-size: 56cqw;
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0;
+  line-height: 1;
+  pointer-events: none;
+  user-select: none;
+  transform: translateY(0.02em);
+}
+
 .diary-cell-marks {
   position: absolute;
   bottom: 4px;

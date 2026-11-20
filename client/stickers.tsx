@@ -55,11 +55,12 @@ const maskStyle = {
 } as const
 
 export function MarkStamp({ level, className }: { level: MarkLevel; className?: string }) {
-  const copies = STACK.slice(0, Math.min(5, Math.max(1, level)))
+  const safeLevel = Math.min(5, Math.max(1, level)) as MarkLevel
+  const copies = STACK.slice(0, safeLevel)
 
   return (
     <span
-      className={classes('paper-mark', `paper-mark-l${level}`, className)}
+      className={classes('paper-mark', `paper-mark-l${safeLevel}`, className)}
       aria-hidden="true"
       style={{ position: 'relative', display: 'inline-block' }}
     >
@@ -78,6 +79,9 @@ export function MarkStamp({ level, className }: { level: MarkLevel; className?: 
           }}
         />
       ))}
+      <span className="paper-mark-digit" aria-hidden="true">
+        {safeLevel}
+      </span>
     </span>
   )
 }
