@@ -126,6 +126,7 @@ The first publish must exist before trusted publishing can be attached; publish 
 ## Security notes
 
 - Diary tools are limited to the owner's **direct chat** (or a diary-scheduled run created by this plugin). Group members sharing the preset get `FORBIDDEN`; the WebUI token remains the page-level authority.
+- The scheduled diary run gets a per-agent tool filter: only `diary_context`, `diary_read`, `diary_write`, `diary_mark`, `diary_attach` are visible. Group text is still untrusted input, but it cannot reach shell/filesystem tools through this agent.
 - Diary files are private (new files `0600`, directories `0700`). The plugin writes under the ChatLuna data directory; restrict the deployment account and backups accordingly.
 - External images in diary Markdown are replaced with a blocked placeholder, so opening a page cannot probe external or localhost URLs. Links open with `noopener noreferrer`.
 - The digest redacts links, keys, tokens and local addresses, but it is still model input from untrusted conversations. Treat it as data, never as instructions. Scheduled prompts say the same.
