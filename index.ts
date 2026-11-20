@@ -1,4 +1,5 @@
-import { chmod, copyFile, mkdir, readFile, readdir, realpath, rename, stat, unlink, writeFile } from 'node:fs/promises'
+import { constants } from 'node:fs'
+import { mkdir, open, readFile, readdir, realpath, rename, stat, unlink, writeFile } from 'node:fs/promises'
 import { extname, isAbsolute, join, resolve, sep } from 'node:path'
 import { randomUUID } from 'node:crypto'
 import { Schema } from '@chatluna/schema'
@@ -28,9 +29,13 @@ const READ_LIMIT = 12000
 const MAX_TITLE = 40
 const DAILY_CRON = '0 22 * * *'
 const JOB_PREFIX = 'chatluna-diary:'
+/** The only tools a scheduled diary run may see: group text can reach it. */
+const DIARY_TOOL_NAMES = ['diary_context', 'diary_read', 'diary_write', 'diary_mark', 'diary_attach']
 
 let tempSeq = 0
 const writeQueues = new Map()
+/** One orphan-media sweep per book per local day; best-effort, never awaited. */
+const mediaSweeps = new Map()
 
 /** Replace a file in one step so a crash never leaves a half-written day. */
 async function writeAtomic(file, content) {
@@ -97,15 +102,9 @@ async function workspaceImage(ctx, value) {
   if (info.size > MAX_IMAGE_BYTES) throw new ApiError('INVALID_ARGUMENT', 'image is larger than 8 MB')
   const ext = extname(real).toLowerCase()
   if (MEDIA_MIME[ext] === undefined) throw new ApiError('INVALID_ARGUMENT', `unsupported image type: ${ext || 'none'}`)
-  return { file: real, ext }
-}
-
-/** The only human label a merged message carries is its first envelope sender. */
-function envelopeSender(message) {
-  for (const block of message.content) {
-    if (block.type === 'envelope' && block.sender?.name) return block.sender.name
-  }
-  return undefined
+  // Identity is captured here and re-checked after the copy handle is opened;
+  // a symlink swap between the two would otherwise read a different file.
+  return { file: real, ext, dev: info.dev, ino: info.ino, size: info.size }
 }
 
 /**
@@ -187,6 +186,30 @@ async function collectDayMessages(ctx, preset, date) {
       const envelopes = []
       for (const block of message.content) if (block.type === 'envelope') envelopes.push(block)
       if (envelopes.length > 0 && envelopes.every((block) => block.kind === 'notice')) continue
+
+      // A merged message carries one envelope per speaker; attributing the whole
+      // thing to the first sender would hand someone else's words to them.
+      let split = false
+      for (const envelope of envelopes) {
+        if (envelope.kind !== 'message') continue
+        split = true
+        const text = extractText(envelope.content ?? [])
+        const media = extractMedia(envelope.content ?? [])
+        if (text === '' && media.length === 0) continue
+        collected.push({
+          time: Number.isFinite(envelope.time) ? envelope.time : entry.time,
+          role: envelope.sender?.self === true ? 'assistant' : 'user',
+          sender: envelope.sender?.name ?? (envelope.sender?.self === true ? selfName : '用户'),
+          senderId: envelope.sender?.id,
+          scene,
+          conversation,
+          text,
+          media
+        })
+      }
+      if (split) continue
+
+      // No envelopes: an assistant turn or a tool reply, kept as one item.
       const text = extractText(message.content)
       const media = extractMedia(message.content)
       if (text === '' && media.length === 0) continue
@@ -197,27 +220,37 @@ async function collectDayMessages(ctx, preset, date) {
         conversation,
         text,
         media,
-        sender: envelopeSender(message) ?? (message.role === 'assistant' ? selfName : '用户')
+        sender: message.role === 'assistant' ? selfName : '用户'
       })
     }
   }
 
   // Whoever talks to this preset in a DM is its owner, even in a group chat where
   // every other speaker is a stranger the renderer should alias.
+  const ownerIds = new Set()
   const ownerNames = new Set()
   for (const item of collected) {
-    if (item.scene === 'dm' && item.role === 'user') ownerNames.add(item.sender)
+    if (item.scene !== 'dm' || item.role !== 'user') continue
+    if (item.senderId !== undefined) ownerIds.add(item.senderId)
+    else ownerNames.add(item.sender)
   }
-  return collected.map((item) => ({
-    time: item.time,
-    role: item.role,
-    sender: item.sender,
-    ...(item.role === 'user' && (item.scene === 'dm' || ownerNames.has(item.sender)) ? { owner: true } : {}),
-    scene: item.scene,
-    conversation: item.conversation,
-    text: item.text,
-    media: item.media
-  }))
+  return collected.map((item) => {
+    const owned =
+      item.role === 'user' &&
+      (item.scene === 'dm' ||
+        (item.senderId !== undefined ? ownerIds.has(item.senderId) : ownerNames.has(item.sender)))
+    return {
+      time: item.time,
+      role: item.role,
+      sender: item.sender,
+      senderId: item.senderId,
+      ...(owned ? { owner: true } : {}),
+      scene: item.scene,
+      conversation: item.conversation,
+      text: item.text,
+      media: item.media
+    }
+  })
 }
 
 /** Render one day of context; the raw messages never leave this function. */
@@ -326,7 +359,7 @@ function marksFile(ctx, preset) {
   return join(bookDirectory(ctx, preset), 'marks.json')
 }
 
-async function readMarks(ctx, preset) {
+async function readMarks(ctx, preset, repair = false) {
   const file = marksFile(ctx, preset)
   let raw
   try {
@@ -340,6 +373,12 @@ async function readMarks(ctx, preset) {
     if (parsed === null || typeof parsed !== 'object' || typeof parsed.marks !== 'object' || parsed.marks === null) return {}
     return parsed.marks
   } catch {
+    if (!repair) {
+      // Reads (state, lists, entry) must not touch the disk; only a writer may
+      // move a broken file aside before replacing it.
+      ctx.logger.warn('diary marks for %s are unreadable; leaving the file in place', preset)
+      return {}
+    }
     // Keep the broken file instead of letting the next write erase every mark.
     const backup = `${file}.corrupt-${Date.now()}`
     await rename(file, backup).catch(() => {})
@@ -362,7 +401,7 @@ function setMark(ctx, preset, input) {
   }
   const note = String(input.note ?? '').replace(/\s+/g, ' ').trim()
   return serialize(bookDirectory(ctx, preset), async () => {
-    const marks = await readMarks(ctx, preset)
+    const marks = await readMarks(ctx, preset, true)
     marks[date] = {
       level,
       ...(note === '' ? {} : { note: Array.from(note).slice(0, 80).join('') }),
@@ -423,6 +462,54 @@ async function listDates(ctx, preset) {
     .filter((file) => file.endsWith('.md') && DATE.test(file.slice(0, -3)))
     .map((file) => ({ date: file.slice(0, -3) }))
     .sort((left, right) => right.date.localeCompare(left.date))
+}
+
+/** Media older than this is only kept when a diary still links it. */
+const MEDIA_RETENTION_MS = 24 * 60 * 60 * 1000
+
+/**
+ * Drop images no diary file links to any more. The age floor keeps anything
+ * just attached but not yet written out of reach; failures stay invisible.
+ */
+async function sweepMedia(ctx, preset) {
+  try {
+    const dir = mediaDirectory(ctx, preset)
+    let files
+    try {
+      files = await readdir(dir)
+    } catch (error) {
+      if (error.code === 'ENOENT') return
+      throw error
+    }
+    const referenced = new Set()
+    for (const { date } of await listDates(ctx, preset)) {
+      const markdown = await readDay(ctx, preset, date)
+      for (const match of markdown.matchAll(/diary-media:([A-Za-z0-9][A-Za-z0-9._-]*)/g)) referenced.add(match[1])
+    }
+    const cutoff = Date.now() - MEDIA_RETENTION_MS
+    for (const file of files) {
+      if (!MEDIA.test(file) || referenced.has(file)) continue
+      const path = join(dir, file)
+      try {
+        const info = await stat(path)
+        if (!info.isFile() || info.nlink !== 1 || info.mtimeMs > cutoff) continue
+        await unlink(path)
+      } catch (error) {
+        if (error.code !== 'ENOENT') throw error
+      }
+    }
+  } catch (error) {
+    // Cleanup is best-effort: a broken book must never fail a diary write.
+    ctx.logger.warn('diary media sweep for %s failed: %s', preset, error instanceof Error ? error.message : String(error))
+  }
+}
+
+/** At most one sweep per book per day, fired after a successful write or attach. */
+function queueMediaSweep(ctx, preset) {
+  const today = localTime(Date.now()).slice(0, 10)
+  if (mediaSweeps.get(preset) === today) return
+  mediaSweeps.set(preset, today)
+  void sweepMedia(ctx, preset)
 }
 
 async function listMarks(ctx, preset) {
@@ -539,6 +626,7 @@ const writeTool = defineTool({
     call.caller.chatluna_webui?.refresh('diary.dates')
     call.caller.chatluna_webui?.refresh('diary.entry')
     call.caller.chatluna_webui?.refresh('diary.books')
+    queueMediaSweep(call.caller, preset)
     return `${entry.appended ? '已追加' : '已写入'} ${entry.date} 的日记《${entry.title}》。`
   }
 })
@@ -634,14 +722,31 @@ const attachTool = defineTool({
     const name = `${localTime(Date.now()).slice(0, 10)}-${randomUUID().slice(0, 8)}${source.ext}`
     const dest = join(dir, name)
     const temp = `${dest}.${process.pid}.${tempSeq++}.tmp`
+    // O_NOFOLLOW makes the open fail instead of following a swapped-in symlink;
+    // stat on the handle then proves it is still the same single-link file.
+    const handle = await open(source.file, constants.O_RDONLY | constants.O_NOFOLLOW)
     try {
-      await copyFile(source.file, temp)
-      await chmod(temp, 0o600)
+      const info = await handle.stat()
+      if (
+        !info.isFile() ||
+        info.nlink !== 1 ||
+        info.size > MAX_IMAGE_BYTES ||
+        info.dev !== source.dev ||
+        info.ino !== source.ino
+      ) {
+        throw new ApiError('INVALID_ARGUMENT', 'image changed while being read')
+      }
+      const data = await handle.readFile()
+      if (data.byteLength > MAX_IMAGE_BYTES) throw new ApiError('INVALID_ARGUMENT', 'image is larger than 8 MB')
+      await writeFile(temp, data, { mode: 0o600 })
       await rename(temp, dest)
     } catch (error) {
       await unlink(temp).catch(() => {})
       throw error
+    } finally {
+      await handle.close().catch(() => {})
     }
+    queueMediaSweep(call.caller, preset)
     const alt = String(input.alt ?? '')
       .replace(/[[\]\n]/g, ' ')
       .replace(/\s+/g, ' ')
@@ -659,6 +764,12 @@ export function apply(ctx) {
   ctx.effect(() => ctx.tools.define(attachTool))
 
   ctx.on('chatluna/agent-open', ({ agent }) => {
+    // Scheduled runs consume untrusted group text; one of this plugin's jobs
+    // must not be able to reach shell or filesystem tools through injection.
+    // Foreign schedules and normal chat agents keep their full toolset.
+    if (ownScheduledJob(ctx, { agent }) !== undefined) {
+      agent.ctx.effect(() => agent.ctx.tools.filter({ include: DIARY_TOOL_NAMES }))
+    }
     agent.ctx.prompt.block({
       id: 'chatluna-diary:guidance',
       zone: 'system',

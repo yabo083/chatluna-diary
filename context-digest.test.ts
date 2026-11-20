@@ -100,7 +100,8 @@ test('redactText removes links, keys, tokens and local addresses', () => {
     'JWT eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0In0.c2lnbmF0dXJl',
     'relay=nai-relay-abcdef123456789',
     '服务在 127.0.0.1 和 203.0.113.20，域名 box.local',
-    '路径 /srv/example/diary.txt',
+    '邮箱 a.b@example.com 电话 13800138000 站点 example.org',
+    '路径 /srv/example/diary.txt 和 /etc/passwd',
     'openssl 生成的 sk-abcdef123456'
   ].join('\n')
 
@@ -111,6 +112,13 @@ test('redactText removes links, keys, tokens and local addresses', () => {
   assert.ok(result.text.includes('203.0.113.20'), 'documentation ranges are not local addresses')
   assert.equal(result.text.includes('box.local'), false)
   assert.equal(result.text.includes('/srv/example'), false)
+  assert.equal(result.text.includes('/etc/passwd'), false)
+  assert.equal(result.text.includes('a.b@example.com'), false)
+  assert.equal(result.text.includes('13800138000'), false)
+  assert.equal(result.text.includes('example.org'), false)
+  assert.ok(result.text.includes('[邮箱]'))
+  assert.ok(result.text.includes('[电话]'))
+  assert.ok(result.text.includes('[域名]'))
   assert.equal(result.text.includes('sk-'), false)
   assert.equal(result.text.includes('eyJ'), false)
   assert.equal(result.text.includes('Bearer '), false)
@@ -173,6 +181,40 @@ test('dm and group conversations share the budget and hide non-owner names', () 
   assert.equal(result.text.includes('小明'), false)
   assert.equal(result.text.includes('小红'), false)
   assert.ok(result.text.includes('测试用户'), 'owner must stay named')
+})
+
+test('split envelopes render as separate speakers with their own time and id', () => {
+  // Shape produced when one merged message carries two speakers' envelopes.
+  const messages: DigestMessage[] = [
+    {
+      time: at(9, 0),
+      role: 'user',
+      sender: '测试用户',
+      senderId: 'u-1',
+      owner: true,
+      scene: 'group',
+      conversation: '周末小组',
+      text: '我先说一句。'
+    },
+    {
+      time: at(9, 5),
+      role: 'user',
+      sender: '小明',
+      senderId: 'u-2',
+      scene: 'group',
+      conversation: '周末小组',
+      text: '轮到我接一句。'
+    }
+  ]
+  const result = renderDigest(messages)
+  assert.ok(result.text.includes('09:00'))
+  assert.ok(result.text.includes('09:05'))
+  assert.ok(result.text.includes('我先说一句'))
+  assert.ok(result.text.includes('轮到我接一句'))
+  assert.ok(result.text.includes('测试用户'))
+  assert.ok(result.text.includes('群友A'))
+  assert.equal(result.text.includes('u-1'), false)
+  assert.equal(result.text.includes('u-2'), false)
 })
 
 test('an empty day forbids invention', () => {

@@ -21,6 +21,8 @@ export interface DigestMessage {
   time: number
   role: 'user' | 'assistant'
   sender: string
+  /** Stable speaker id, when the source message carried one. */
+  senderId?: string
   owner?: boolean
   scene: 'dm' | 'group'
   conversation: string
@@ -207,7 +209,16 @@ const REDACTION_RULES: readonly RedactionRule[] = [
   { pattern: /\b[a-z0-9]+(?:-[a-z0-9]+)*-relay(?:-[A-Za-z0-9_-]{3,})+/gi, replace: '[已脱敏]' },
   { pattern: new RegExp(`\\b${INTERNAL_IP}\\b`, 'g'), replace: '[本地地址]' },
   { pattern: /\b[a-z0-9][a-z0-9-]*(?:\.[a-z0-9-]+)*\.local\b/gi, replace: '[本地地址]' },
-  { pattern: /\/(?:root|srv)(?:\/[A-Za-z0-9._@%+-]+)*/g, replace: '[本地路径]' },
+  { pattern: /\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b/g, replace: '[邮箱]' },
+  {
+    pattern: /(?<!\d)(?:\+?\d{1,3}[ -]?)?(?:1[3-9]\d{9}|\d{3}[ -]?\d{3,4}[ -]?\d{4})(?!\d)/g,
+    replace: '[电话]'
+  },
+  {
+    pattern: /\b[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)*\.(?:com|net|org|io|cn|dev|app|co|me|xyz|top|cc)\b/gi,
+    replace: '[域名]'
+  },
+  { pattern: /\/(?:root|srv|etc|home|opt|var|usr)(?:\/[A-Za-z0-9._@%+-]+)*/g, replace: '[本地路径]' },
   {
     pattern: /\b[A-Za-z0-9_-]{32,}\b/g,
     replace: (match: string): string => {
