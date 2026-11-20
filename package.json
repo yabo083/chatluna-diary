@@ -1,6 +1,6 @@
 {
   "name": "chatluna-diary",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Per-preset diary, conversation digest, stacked brush marks, media and scheduled writing for ChatLuna v2 WebUI.",
   "type": "module",
   "license": "MIT",
@@ -22,15 +22,16 @@
     "plugin",
     "chatluna-v2"
   ],
-  "main": "./index.ts",
+  "main": "./server.js",
   "exports": {
-    ".": "./index.ts",
+    ".": "./server.js",
     "./client": "./client/index.tsx"
   },
   "files": [
     "index.ts",
     "context-digest.ts",
     "preset-scope.ts",
+    "server.js",
     "client",
     "dist",
     "skills",
@@ -40,7 +41,7 @@
     "SECURITY.md"
   ],
   "scripts": {
-    "build": "vite build",
+    "build": "vite build && vite build --config vite.server.config.ts",
     "test": "node --test context-digest.test.ts preset-scope.test.ts",
     "prepack": "npm run build",
     "prepublishOnly": "npm test"
