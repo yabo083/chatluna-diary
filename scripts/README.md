@@ -1,7 +1,7 @@
 # Source bootstrap for Windows
 
 ```powershell
-# Run from the package root, e.g. <workspace>\chatluna-diary
+# Run from the package root, e.g. <workspace>\projects\chatluna-diary
 Set-ExecutionPolicy -Scope Process Bypass
 .\scripts\windows-bootstrap.ps1 -SourceRoot (Get-Location).Path
 ```

@@ -29,11 +29,11 @@ The server loads `index.ts`; the browser bundle is `dist/client.js`. The package
 
 ### Windows source
 
-Pick any workspace directory for source checkouts (`<workspace>` below).
+Put the checkout under the `projects/` column:
 
 ```powershell
-New-Item -ItemType Directory -Force <workspace>
-Set-Location <workspace>
+New-Item -ItemType Directory -Force <workspace>\projects
+Set-Location <workspace>\projects
 git clone https://github.com/yabo083/chatluna-diary.git
 Set-Location chatluna-diary
 Set-ExecutionPolicy -Scope Process Bypass
