@@ -7,7 +7,7 @@ A per-preset diary for ChatLuna v2 WebUI: read the day's real conversation diges
 - **One book per preset** under `data/chatluna/diary/<presetId>/`.
 - **`diary_context`** builds a bounded, redacted digest of real user/assistant turns for one local day. It excludes tool/system noise and the schedule subagent; the middle of a conversation may be omitted, so the model must not invent what it cannot see.
 - **`diary_read`** returns up to 7 days / ~12,000 characters of existing entries, newest first.
-- **`diary_write`** writes `append` or `replace`; ordinary chats default to replace, scheduled jobs default to append.
+- **`diary_write`** writes `append` or `replace`; the default is **append** (configurable), and scheduled jobs explicitly append.
 - **`diary_mark`** puts a 1–5 importance mark on a date, independent of whether a body exists.
 - **Marks are one mark, stacked**: a single hand-drawn vermilion brush circle is repeated 1–5 times for levels 1–5. The mask is shipped inline; no external image request.
 - **`diary_attach`** copies an image from `data/chatluna/agents-work/` into the book and returns a `diary-media:` Markdown tag.
@@ -71,16 +71,31 @@ data/chatluna/diary/<presetId>/
 
 The model-facing contract is also injected into each agent's system prompt. Keep it in sync with `index.ts` when tools change.
 
+## Configuration
+
+These fields are exported as the plugin `Config` and appear on the ChatLuna plugin page:
+
+- `scheduleEnabled` (default on)
+- `dailyCron` (default `0 22 * * *`)
+- `defaultWriteMode` (`append` default, or `replace`)
+- `digestBudget` (default 12000)
+- `readLimit` (default 12000)
+- `maxBodyChars` (default 32000)
+- `maxImageMb` (default 8)
+- `mediaRetentionHours` (default 24)
+
+Disabling the schedule removes this plugin's existing jobs; manual tool calls are unaffected.
+
 ## Marks
 
-Level N renders the same brush mask N times, with small deterministic offsets/rotations. Higher levels look denser because the ink stacks; there are no separate leaf/star/heart shapes. The mask lives at `client/assets/mark-l5-mask.png` and is inlined by the Vite library build.
+Level N renders the same brush mask N times, with small deterministic offsets/rotations, plus a centered `1–5` numeral in a local rounded font. Higher levels look denser because the ink stacks; there are no separate leaf/star/heart shapes. The mask lives at `client/assets/mark-l5-mask.png` and is inlined by the Vite library build.
 
 ## Build and test
 
 ```bash
 npm install
 npm test        # node --test context-digest.test.ts
-npm run build   # dist/client.js + dist/client.css
+npm run build   # dist/client.* + server.js
 npm pack        # verifies the published file set
 ```
 
