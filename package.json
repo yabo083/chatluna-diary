@@ -1,0 +1,95 @@
+{
+  "name": "chatluna-diary",
+  "version": "0.1.0",
+  "description": "Per-preset diary, conversation digest, stacked brush marks, media and scheduled writing for ChatLuna v2 WebUI.",
+  "type": "module",
+  "license": "MIT",
+  "author": "chatluna-diary contributors",
+  "homepage": "https://github.com/yabo083/chatluna-diary",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/yabo083/chatluna-diary.git"
+  },
+  "bugs": {
+    "url": "https://github.com/yabo083/chatluna-diary/issues"
+  },
+  "keywords": [
+    "chatluna",
+    "koishi",
+    "diary",
+    "journal",
+    "llm",
+    "plugin",
+    "chatluna-v2"
+  ],
+  "main": "./index.ts",
+  "exports": {
+    ".": "./index.ts",
+    "./client": "./client/index.tsx"
+  },
+  "files": [
+    "index.ts",
+    "context-digest.ts",
+    "preset-scope.ts",
+    "client",
+    "dist",
+    "skills",
+    "scripts",
+    "README.md",
+    "LICENSE",
+    "SECURITY.md"
+  ],
+  "scripts": {
+    "build": "vite build",
+    "test": "node --test context-digest.test.ts preset-scope.test.ts",
+    "prepack": "npm run build",
+    "prepublishOnly": "npm test && npm run build"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "peerDependencies": {
+    "@chatluna/schema": "*",
+    "@chatluna/server": "*",
+    "@chatluna/tool": "*",
+    "@chatluna/ui-client": "*",
+    "@chatluna/utils": "*",
+    "markdown-it-ts": "*",
+    "react": "*",
+    "react-router": "*"
+  },
+  "peerDependenciesMeta": {
+    "@chatluna/schema": {
+      "optional": true
+    },
+    "@chatluna/server": {
+      "optional": true
+    },
+    "@chatluna/tool": {
+      "optional": true
+    },
+    "@chatluna/ui-client": {
+      "optional": true
+    },
+    "@chatluna/utils": {
+      "optional": true
+    },
+    "markdown-it-ts": {
+      "optional": true
+    },
+    "react": {
+      "optional": true
+    },
+    "react-router": {
+      "optional": true
+    }
+  },
+  "devDependencies": {
+    "vite": "^8.3.5",
+    "lucide-react": "^1.66.0"
+  },
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
+  }
+}

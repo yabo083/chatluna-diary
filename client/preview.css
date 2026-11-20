@@ -1,0 +1,243 @@
+/* Stack lab: one page that shows the single brush circle stacked 1–5 times in
+   the live V2 book layout. There are no controls: the level is the stack count. */
+
+.diary-mark-lab {
+  box-sizing: border-box;
+  width: 100%;
+  max-width: 1480px;
+  margin: 0 auto;
+  padding: var(--page-gutter);
+  /* A stack of five slightly offset copies must not create a sideways scrollbar. */
+  overflow-x: clip;
+  color: var(--foreground);
+  font-family: var(--font-sans);
+}
+
+/* ------------------------------------------------------------------ */
+/* Intro and section heads                                             */
+/* ------------------------------------------------------------------ */
+
+.diary-lab-intro {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.diary-lab-intro h1 {
+  margin: 0;
+  font-size: 24px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+
+.diary-lab-intro > p:last-child {
+  max-width: 62ch;
+  margin: 0;
+  color: var(--muted-foreground);
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+.diary-lab-block {
+  margin-top: 28px;
+  padding-top: 18px;
+  border-top: 1px solid var(--border);
+}
+
+.diary-lab-head {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-bottom: 12px;
+}
+
+.diary-lab-head .diary-kicker {
+  margin: 0;
+}
+
+.diary-lab-head h2 {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 600;
+  letter-spacing: -0.008em;
+}
+
+.diary-lab-head > p:not(.diary-kicker) {
+  max-width: 72ch;
+  margin: 0;
+  color: var(--muted-foreground);
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+/* ------------------------------------------------------------------ */
+/* Gallery: the five stack depths outside .diary-page                  */
+/* ------------------------------------------------------------------ */
+
+.diary-mark-gallery {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.diary-mark-card {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 9px;
+  margin: 0;
+  padding: 12px 14px 14px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--card);
+}
+
+.diary-mark-level {
+  color: var(--muted-foreground);
+  font-size: 10px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.12em;
+  line-height: 1;
+}
+
+.diary-mark-stage {
+  display: flex;
+  min-height: 84px;
+  align-items: center;
+  justify-content: center;
+  padding: 10px;
+  border-radius: 8px;
+  background: color-mix(in oklab, var(--accent) 22%, transparent);
+}
+
+.diary-mark-stage .diary-mark {
+  display: inline-flex;
+  align-items: center;
+}
+
+/* Every level is the same red brush circle; only the stack count differs. */
+.diary-mark-stage .diary-mark-svg {
+  width: 46px;
+  height: 46px;
+  color: var(--destructive);
+}
+
+.diary-mark-caption {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.diary-mark-name {
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+
+.diary-mark-desc {
+  color: var(--muted-foreground);
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+.diary-mark-meta {
+  margin-top: 2px;
+  color: var(--muted-foreground);
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.04em;
+}
+
+/* ------------------------------------------------------------------ */
+/* V2 page: the live markup, kept at its live size                     */
+/* ------------------------------------------------------------------ */
+
+.diary-lab-v2 {
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  background: var(--background);
+}
+
+.diary-mark-lab .diary-page.variant-depth.variant-signature {
+  padding: 22px 24px 26px;
+}
+
+/* The calendar carries no live buttons here, only the same pill chrome. */
+.diary-mark-lab .diary-calendar-btn {
+  display: inline-flex;
+  min-width: 30px;
+  height: 30px;
+  align-items: center;
+  justify-content: center;
+  padding: 0 8px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--card);
+  color: var(--muted-foreground);
+}
+
+.diary-mark-lab .diary-page.variant-depth.variant-signature .diary-cell-marks .diary-mark-svg {
+  width: 15px;
+  height: 15px;
+}
+
+.diary-mark-lab .diary-page.variant-depth.variant-signature .diary-index-meta .diary-mark-svg {
+  width: 13px;
+  height: 13px;
+}
+
+.diary-mark-lab .diary-page.variant-depth.variant-signature .diary-mark-note .diary-mark-svg {
+  width: 14px;
+  height: 14px;
+}
+
+/* ------------------------------------------------------------------ */
+/* Narrow screens                                                      */
+/* ------------------------------------------------------------------ */
+
+@media (max-width: 900px) {
+  .diary-mark-lab {
+    padding: 16px;
+  }
+
+  .diary-mark-gallery {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .diary-mark-lab .diary-page.variant-depth.variant-signature {
+    padding: 14px;
+  }
+}
+
+@media (max-width: 560px) {
+  .diary-mark-lab {
+    padding: 12px;
+  }
+
+  .diary-mark-gallery {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .diary-mark-stage {
+    min-height: 76px;
+  }
+
+  .diary-mark-stage .diary-mark-svg {
+    width: 40px;
+    height: 40px;
+  }
+
+  .diary-mark-lab .diary-page.variant-depth.variant-signature {
+    padding: 12px;
+  }
+
+  /* Keep the reading head from clipping at 390px. */
+  .diary-mark-lab .diary-page.variant-depth.variant-signature .diary-reading-head {
+    flex-wrap: wrap;
+    align-items: flex-start;
+    gap: 10px;
+  }
+}

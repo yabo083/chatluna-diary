@@ -1,0 +1,161 @@
+/* variant: depth - V2 light elevation; 1px borders carry structure, one soft shadow lifts it */
+
+.diary-page.variant-depth {
+  --dp-border: color-mix(in oklab, var(--border) 70%, var(--muted-foreground) 30%);
+  --dp-border-soft: color-mix(in oklab, var(--border) 84%, var(--muted-foreground) 16%);
+  --dp-hover: color-mix(in oklab, var(--background) 78%, var(--secondary));
+  --dp-sheen: inset 0 1px 0 color-mix(in oklab, var(--card) 70%, white 30%);
+  --dp-shadow-cell: 0 1px 2px rgb(0 0 0 / 0.04), 0 6px 14px -14px rgb(0 0 0 / 0.22);
+  --dp-shadow: 0 1px 2px rgb(0 0 0 / 0.04), 0 8px 24px -20px rgb(0 0 0 / 0.32);
+  --dp-shadow-lg: 0 1px 2px rgb(0 0 0 / 0.04), 0 14px 36px -28px rgb(0 0 0 / 0.36);
+}
+
+/* header */
+
+.diary-page.variant-depth .diary-kicker { letter-spacing: 0.1em; font-weight: 500; }
+.diary-page.variant-depth .diary-header h1 { letter-spacing: -0.012em; }
+.diary-page.variant-depth .diary-meta-badge {
+  height: 30px; padding: 0 10px; border: 1px solid var(--dp-border-soft);
+  border-radius: 8px; background: var(--card); box-shadow: var(--dp-shadow-cell);
+}
+.diary-page.variant-depth button.diary-meta-badge.is-interactive:hover {
+  border-color: var(--dp-border); background: var(--secondary);
+}
+
+/* calendar shell */
+
+.diary-page.variant-depth .diary-calendar {
+  padding: 14px 16px 16px; border: 1px solid var(--dp-border); border-radius: 12px;
+  background: var(--card); box-shadow: var(--dp-shadow), var(--dp-sheen);
+}
+.diary-page.variant-depth .diary-calendar-head { height: 36px; }
+.diary-page.variant-depth .diary-month-value { letter-spacing: -0.02em; }
+.diary-page.variant-depth .diary-calendar-head button {
+  border: 1px solid var(--dp-border-soft); border-radius: 8px; background: var(--card);
+  box-shadow: var(--dp-shadow-cell);
+  transition: background-color 160ms ease, border-color 160ms ease, color 160ms ease, box-shadow 160ms ease;
+}
+.diary-page.variant-depth .diary-calendar-head button:hover {
+  border-color: color-mix(in oklab, var(--dp-border) 45%, var(--ring)); background: var(--secondary);
+}
+.diary-page.variant-depth .diary-weekdays { margin-top: 9px; letter-spacing: 0.08em; }
+.diary-page.variant-depth .diary-grid { margin-top: 3px; gap: 5px; }
+
+/* calendar cells */
+
+.diary-page.variant-depth .diary-cell {
+  height: 42px; min-height: 42px; padding: 0 8px; border: 1px solid var(--dp-border-soft);
+  border-radius: 10px; background: var(--background); box-shadow: 0 1px 1px rgb(0 0 0 / 0.02);
+  transition: background-color 160ms ease, border-color 160ms ease, box-shadow 160ms ease;
+}
+.diary-page.variant-depth .diary-cell.is-blank {
+  border-color: transparent; background: transparent; box-shadow: none;
+}
+.diary-page.variant-depth .diary-cell:not(.is-blank):hover {
+  border-color: color-mix(in oklab, var(--dp-border) 40%, var(--ring));
+  background: var(--dp-hover); box-shadow: var(--dp-shadow-cell);
+}
+.diary-page.variant-depth .diary-cell.is-selected {
+  border-color: var(--ring); background: var(--card); color: var(--foreground);
+  box-shadow: var(--dp-shadow-cell), var(--dp-sheen);
+}
+.diary-page.variant-depth .diary-cell-day { font-weight: 500; }
+
+/* index */
+
+.diary-page.variant-depth .diary-index {
+  padding: 14px; border: 1px solid var(--dp-border); border-radius: 12px;
+  background: var(--card); box-shadow: var(--dp-shadow);
+}
+.diary-page.variant-depth .diary-index-head {
+  padding: 2px 4px 10px; border-bottom: 1px solid var(--dp-border-soft); letter-spacing: 0.04em;
+}
+.diary-page.variant-depth .diary-index-month h3 { margin-left: 4px; letter-spacing: 0.04em; }
+.diary-page.variant-depth .diary-index-row {
+  border: 1px solid transparent; border-radius: 8px;
+  transition: background-color 160ms ease, border-color 160ms ease, color 160ms ease;
+}
+.diary-page.variant-depth .diary-index-row:hover {
+  border-color: var(--dp-border-soft); background: var(--secondary);
+}
+.diary-page.variant-depth .diary-index-row.is-selected {
+  border-color: color-mix(in oklab, var(--dp-border-soft) 55%, var(--ring)); background: var(--accent);
+}
+
+/* reading */
+
+.diary-page.variant-depth .diary-reading-head h2 { letter-spacing: -0.012em; }
+.diary-page.variant-depth .diary-mark-note {
+  padding: 4px 11px; border: 1px solid var(--dp-border-soft); border-radius: 8px;
+  background: var(--card); box-shadow: var(--dp-shadow-cell);
+}
+.diary-page.variant-depth .diary-paper {
+  padding: 26px 28px; border: 1px solid var(--dp-border); border-radius: 12px;
+  background: var(--card); box-shadow: var(--dp-shadow-lg), var(--dp-sheen);
+}
+.diary-page.variant-depth .diary-markdown blockquote {
+  border-left: 2px solid var(--dp-border); border-radius: 0 6px 6px 0; background: var(--muted);
+}
+.diary-page.variant-depth .diary-markdown pre {
+  border: 1px solid var(--dp-border-soft); border-radius: 8px;
+}
+
+/* books */
+
+.diary-page.variant-depth .diary-books-grid { gap: 14px; margin-top: 20px; }
+.diary-page.variant-depth .diary-book {
+  padding: 16px; border: 1px solid var(--dp-border); border-radius: 12px; background: var(--card);
+  box-shadow: var(--dp-shadow);
+  transition: background-color 160ms ease, border-color 160ms ease, box-shadow 160ms ease;
+}
+.diary-page.variant-depth .diary-book:hover {
+  border-color: color-mix(in oklab, var(--dp-border) 35%, var(--ring));
+  background: color-mix(in oklab, var(--card) 92%, var(--secondary));
+  box-shadow: var(--dp-shadow-lg);
+}
+.diary-page.variant-depth .diary-book-head { gap: 8px; }
+.diary-page.variant-depth .diary-book-name { font-size: 15px; letter-spacing: -0.008em; }
+.diary-page.variant-depth .diary-book-icon { color: var(--muted-foreground); }
+.diary-page.variant-depth .diary-book-meta { padding-top: 10px; border-top: 1px solid var(--dp-border-soft); }
+
+/* dark: borders lighter than card, deeper shadows, still no glow */
+
+.dark .diary-page.variant-depth {
+  --dp-border: color-mix(in oklab, var(--border) 62%, var(--muted-foreground) 38%);
+  --dp-border-soft: color-mix(in oklab, var(--border) 76%, var(--muted-foreground) 24%);
+  --dp-hover: color-mix(in oklab, var(--card) 80%, var(--secondary));
+  --dp-sheen: inset 0 1px 0 rgb(255 255 255 / 0.06);
+  --dp-shadow-cell: 0 1px 2px rgb(0 0 0 / 0.45), 0 8px 18px -16px rgb(0 0 0 / 0.7);
+  --dp-shadow: 0 1px 3px rgb(0 0 0 / 0.5), 0 12px 30px -24px rgb(0 0 0 / 0.85);
+  --dp-shadow-lg: 0 1px 3px rgb(0 0 0 / 0.55), 0 18px 44px -32px rgb(0 0 0 / 0.95);
+}
+.dark .diary-page.variant-depth .diary-cell {
+  border-color: var(--dp-border-soft); background: var(--background); box-shadow: none;
+}
+.dark .diary-page.variant-depth .diary-cell:not(.is-blank):hover {
+  border-color: color-mix(in oklab, var(--dp-border) 55%, var(--ring));
+  background: var(--dp-hover); box-shadow: var(--dp-shadow-cell);
+}
+.dark .diary-page.variant-depth .diary-cell.is-selected {
+  border-color: color-mix(in oklab, var(--ring) 80%, var(--foreground) 20%);
+  background: var(--card); box-shadow: var(--dp-shadow-cell), var(--dp-sheen);
+}
+.dark .diary-page.variant-depth .diary-index-row.is-selected {
+  border-color: color-mix(in oklab, var(--dp-border-soft) 45%, var(--ring));
+  background: color-mix(in oklab, var(--accent) 70%, var(--card));
+}
+.dark .diary-page.variant-depth .diary-markdown pre {
+  background: color-mix(in oklab, var(--muted) 85%, var(--background));
+}
+
+@media (max-width: 700px) {
+  .diary-page.variant-depth .diary-cell { height: 40px; min-height: 40px; padding: 0 6px; }
+  .diary-page.variant-depth .diary-paper { padding: 20px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .diary-page.variant-depth .diary-cell,
+  .diary-page.variant-depth .diary-book,
+  .diary-page.variant-depth .diary-calendar-head button,
+  .diary-page.variant-depth .diary-index-row { transition: none; }
+}

@@ -1,0 +1,468 @@
+/* variant: signature - the V2 depth page, signed.
+   Depth stays the base (1px borders, one soft shadow per card); this overlay only
+   adds a full-bleed layout, hand-drawn marks, calendar badges and a few hairlines.
+   Every colour is derived from theme tokens, so both schemes carry the same design. */
+
+.diary-page.variant-depth.variant-signature {
+  width: 100%;
+  max-width: none;
+  margin: 0;
+  padding-bottom: calc(var(--page-gutter) + 16px);
+
+  /* No chart token is green, so the solar hue is stated once per scheme:
+     a muted leaf in light, sage in dark. Everything else is a token mix. */
+  --dp-sig-leaf: oklch(0.56 0.095 154);
+  --dp-dogear: var(--primary);
+  --dp-shadow-image: 0 1px 2px rgb(0 0 0 / 0.05), 0 10px 26px -22px rgb(0 0 0 / 0.4);
+}
+
+.dark .diary-page.variant-depth.variant-signature {
+  --dp-sig-leaf: oklch(0.8 0.085 158);
+  --dp-dogear: color-mix(in oklab, var(--primary) 55%, var(--border));
+  --dp-shadow-image: 0 1px 3px rgb(0 0 0 / 0.5), 0 14px 32px -24px rgb(0 0 0 / 0.9);
+}
+
+/* header: a short rule before the kicker, the only flourish above the fold */
+
+.diary-page.variant-depth.variant-signature .diary-kicker {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 10px;
+  letter-spacing: 0.14em;
+}
+
+.diary-page.variant-depth.variant-signature .diary-kicker::before {
+  content: '';
+  flex: none;
+  width: 15px;
+  height: 2px;
+  border-radius: 999px;
+  background: linear-gradient(90deg, var(--primary), transparent);
+  opacity: 0.7;
+}
+
+.diary-page.variant-depth.variant-signature .diary-header {
+  margin-bottom: 20px;
+}
+
+.diary-page.variant-depth.variant-signature .diary-header h1 {
+  font-size: 25px;
+}
+
+/* calendar shell: same card, a little more air now that it spans the page */
+
+.diary-page.variant-depth.variant-signature .diary-calendar {
+  padding: 16px 18px 18px;
+  border-radius: 14px;
+}
+
+.diary-page.variant-depth.variant-signature .diary-calendar-head {
+  height: 38px;
+}
+
+.diary-page.variant-depth.variant-signature .diary-month-value {
+  position: relative;
+}
+
+.diary-page.variant-depth.variant-signature .diary-month-value::after {
+  content: '';
+  position: absolute;
+  right: 1px;
+  bottom: -6px;
+  left: 1px;
+  height: 2px;
+  border-radius: 999px;
+  background: linear-gradient(90deg, var(--primary), transparent);
+  opacity: 0.55;
+}
+
+.diary-page.variant-depth.variant-signature .diary-weekdays {
+  margin-top: 12px;
+}
+
+.diary-page.variant-depth.variant-signature .diary-grid {
+  margin-top: 4px;
+  gap: 6px;
+}
+
+/* calendar cells: numeral top-left, badge pinned top-right, mark bottom-left */
+
+.diary-page.variant-depth.variant-signature .diary-cell {
+  height: 44px;
+  min-height: 44px;
+  align-items: flex-start;
+  padding: 7px 10px 0;
+  border-radius: 11px;
+}
+
+.diary-page.variant-depth.variant-signature .diary-cell-day {
+  font-size: 12px;
+  line-height: 1.2;
+  font-variant-numeric: tabular-nums;
+}
+
+/* states: today keeps the base sheet's dog-ear and only strengthens its
+   numeral; selection is one accent card with the ring as its border. */
+.diary-page.variant-depth.variant-signature .diary-cell.is-selected {
+  background: color-mix(in oklab, var(--accent) 78%, var(--card));
+  border-color: var(--ring);
+}
+
+.diary-page.variant-depth.variant-signature .diary-cell.is-today .diary-cell-day {
+  font-weight: 600;
+  color: var(--primary);
+}
+
+.diary-page.variant-depth.variant-signature .diary-cell.is-today::after {
+  background: var(--dp-dogear);
+}
+
+/* dark: tiles sit above the page like the light ones do, blank cells stay blank */
+.dark .diary-page.variant-depth.variant-signature .diary-cell:not(.is-blank) {
+  background: color-mix(in oklab, var(--card) 88%, var(--background));
+}
+
+.dark .diary-page.variant-depth.variant-signature .diary-cell.is-selected:not(.is-blank) {
+  background: color-mix(in oklab, var(--accent) 70%, var(--card));
+}
+
+/* the dark depth rule gives every cell a fill; keep the empty leading and
+   trailing slots of the month invisible */
+.dark .diary-page.variant-depth.variant-signature .diary-cell.is-blank {
+  border-color: transparent;
+  background: transparent;
+  box-shadow: none;
+}
+
+/* calendar badges: one rounded pill per date, tinted by tone */
+
+.diary-page.variant-depth.variant-signature .diary-badge {
+  position: absolute;
+  top: 5px;
+  right: 6px;
+  max-width: calc(100% - 34px);
+  overflow: hidden;
+  padding: 2px 7px;
+  border: 1px solid transparent;
+  border-radius: 999px;
+  font-size: 10px;
+  font-weight: 500;
+  line-height: 1.2;
+  letter-spacing: 0.02em;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  pointer-events: none;
+}
+
+.diary-page.variant-depth.variant-signature .diary-badge.is-rest {
+  --dp-badge-ink: color-mix(in oklab, var(--destructive) 82%, var(--foreground) 18%);
+  --dp-badge-bg: color-mix(in oklab, var(--destructive) 11%, var(--card));
+  --dp-badge-line: color-mix(in oklab, var(--destructive) 30%, transparent);
+  color: var(--dp-badge-ink);
+  background: var(--dp-badge-bg);
+  border-color: var(--dp-badge-line);
+}
+
+.diary-page.variant-depth.variant-signature .diary-badge.is-work {
+  --dp-badge-ink: var(--muted-foreground);
+  --dp-badge-bg: color-mix(in oklab, var(--muted) 55%, transparent);
+  --dp-badge-line: var(--dp-border-soft);
+  color: var(--dp-badge-ink);
+  background: var(--dp-badge-bg);
+  border-color: var(--dp-badge-line);
+}
+
+.diary-page.variant-depth.variant-signature .diary-badge.is-festival {
+  --dp-badge-ink: color-mix(in oklab, var(--primary) 78%, var(--foreground) 22%);
+  --dp-badge-bg: color-mix(in oklab, var(--primary) 10%, var(--card));
+  --dp-badge-line: color-mix(in oklab, var(--primary) 26%, transparent);
+  color: var(--dp-badge-ink);
+  background: var(--dp-badge-bg);
+  border-color: var(--dp-badge-line);
+}
+
+.diary-page.variant-depth.variant-signature .diary-badge.is-solar {
+  --dp-badge-ink: color-mix(in oklab, var(--dp-sig-leaf) 88%, var(--foreground) 12%);
+  --dp-badge-bg: color-mix(in oklab, var(--dp-sig-leaf) 10%, var(--card));
+  --dp-badge-line: color-mix(in oklab, var(--dp-sig-leaf) 26%, transparent);
+  color: var(--dp-badge-ink);
+  background: var(--dp-badge-bg);
+  border-color: var(--dp-badge-line);
+}
+
+.diary-page.variant-depth.variant-signature .diary-badge.is-lunar {
+  --dp-badge-ink: var(--muted-foreground);
+  --dp-badge-bg: transparent;
+  --dp-badge-line: transparent;
+  padding: 2px 4px;
+  color: var(--dp-badge-ink);
+  font-size: 9.5px;
+  font-weight: 400;
+  letter-spacing: 0.01em;
+  background: var(--dp-badge-bg);
+}
+
+.dark .diary-page.variant-depth.variant-signature .diary-badge.is-rest {
+  --dp-badge-bg: color-mix(in oklab, var(--destructive) 20%, var(--card));
+  --dp-badge-line: color-mix(in oklab, var(--destructive) 38%, transparent);
+}
+
+.dark .diary-page.variant-depth.variant-signature .diary-badge.is-work {
+  --dp-badge-bg: color-mix(in oklab, var(--muted) 80%, transparent);
+}
+
+.dark .diary-page.variant-depth.variant-signature .diary-badge.is-festival {
+  --dp-badge-bg: color-mix(in oklab, var(--primary) 18%, var(--card));
+  --dp-badge-line: color-mix(in oklab, var(--primary) 34%, transparent);
+}
+
+.dark .diary-page.variant-depth.variant-signature .diary-badge.is-solar {
+  --dp-badge-ink: color-mix(in oklab, var(--dp-sig-leaf) 92%, var(--foreground) 8%);
+  --dp-badge-bg: color-mix(in oklab, var(--dp-sig-leaf) 17%, var(--card));
+  --dp-badge-line: color-mix(in oklab, var(--dp-sig-leaf) 32%, transparent);
+}
+
+.dark .diary-page.variant-depth.variant-signature .diary-badge.is-lunar {
+  --dp-badge-ink: color-mix(in oklab, var(--muted-foreground) 88%, var(--foreground) 12%);
+}
+
+/* hand-drawn mark: one brush circle; the copies inside carry the weight */
+
+.diary-page.variant-depth.variant-signature .diary-mark {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  color: var(--destructive);
+  opacity: 1;
+}
+
+.diary-page.variant-depth.variant-signature .diary-mark-svg {
+  width: 15px;
+  height: 15px;
+  flex: none;
+}
+
+.diary-page.variant-depth.variant-signature .diary-cell-marks {
+  bottom: 4px;
+  left: 9px;
+}
+
+/* index */
+
+.diary-page.variant-depth.variant-signature .diary-index {
+  padding: 15px;
+  border-radius: 14px;
+}
+
+.diary-page.variant-depth.variant-signature .diary-index-row {
+  padding: 7px 9px;
+}
+
+.diary-page.variant-depth.variant-signature .diary-index-day {
+  font-size: 12px;
+  letter-spacing: 0.01em;
+}
+
+.diary-page.variant-depth.variant-signature .diary-index-weekday {
+  flex: 1;
+  margin-left: -2px;
+  color: var(--muted-foreground);
+  font-size: 10px;
+  letter-spacing: 0.04em;
+}
+
+.diary-page.variant-depth.variant-signature .diary-index-row.is-selected .diary-index-weekday {
+  color: inherit;
+  opacity: 0.75;
+}
+
+.diary-page.variant-depth.variant-signature .diary-index-meta .diary-mark-svg {
+  width: 13px;
+  height: 13px;
+}
+
+/* reading */
+
+.diary-page.variant-depth.variant-signature .diary-reading {
+  gap: 16px;
+}
+
+.diary-page.variant-depth.variant-signature .diary-reading-date {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.diary-page.variant-depth.variant-signature .diary-reading-title {
+  display: flex;
+  align-items: baseline;
+  gap: 9px;
+}
+
+.diary-page.variant-depth.variant-signature .diary-reading-weekday {
+  color: var(--muted-foreground);
+  font-size: 11px;
+  letter-spacing: 0.04em;
+}
+
+.diary-page.variant-depth.variant-signature .diary-reading-rule {
+  width: 36px;
+  height: 2px;
+  margin-top: 1px;
+  border-radius: 999px;
+  background: linear-gradient(90deg, var(--primary), transparent);
+  opacity: 0.5;
+}
+
+.diary-page.variant-depth.variant-signature .diary-mark-note {
+  gap: 8px;
+  border-radius: 999px;
+  padding: 4px 12px;
+}
+
+.diary-page.variant-depth.variant-signature .diary-mark-note .diary-mark-svg {
+  width: 14px;
+  height: 14px;
+}
+
+.diary-page.variant-depth.variant-signature .diary-paper {
+  padding: 30px 34px;
+  border-radius: 14px;
+  min-height: 320px;
+}
+
+.diary-page.variant-depth.variant-signature .diary-markdown {
+  font-size: 15px;
+  line-height: 1.85;
+}
+
+/* Prose keeps a readable measure on a full-width sheet; media and code blocks
+   are allowed to use the whole card. */
+.diary-page.variant-depth.variant-signature .diary-markdown > p,
+.diary-page.variant-depth.variant-signature .diary-markdown > ul,
+.diary-page.variant-depth.variant-signature .diary-markdown > ol,
+.diary-page.variant-depth.variant-signature .diary-markdown > blockquote,
+.diary-page.variant-depth.variant-signature .diary-markdown > h2,
+.diary-page.variant-depth.variant-signature .diary-markdown > h3,
+.diary-page.variant-depth.variant-signature .diary-markdown > h4 {
+  max-width: 82ch;
+}
+
+.diary-page.variant-depth.variant-signature .diary-markdown img {
+  border-radius: 12px;
+}
+
+.diary-page.variant-depth.variant-signature .diary-markdown p > img:only-child {
+  margin: 1.4em 0;
+  border: 1px solid var(--dp-border-soft);
+  background: var(--muted);
+  box-shadow: var(--dp-shadow-image);
+}
+
+.diary-page.variant-depth.variant-signature .diary-markdown blockquote {
+  border-left-color: color-mix(in oklab, var(--primary) 45%, var(--dp-border));
+}
+
+.diary-page.variant-depth.variant-signature .diary-empty {
+  padding: 64px 0;
+}
+
+/* wide sheets: taller cells keep the month grid from stretching into stripes */
+
+@media (min-width: 1440px) {
+  .diary-page.variant-depth.variant-signature .diary-cell {
+    height: 52px;
+    min-height: 52px;
+  }
+
+  .diary-page.variant-depth.variant-signature .diary-cell-day {
+    font-size: 13px;
+  }
+
+  .diary-page.variant-depth.variant-signature .diary-grid {
+    gap: 7px;
+  }
+
+  .diary-page.variant-depth.variant-signature .diary-markdown {
+    font-size: 15.5px;
+  }
+}
+
+/* Above ~1900px a cell is a wide tile: the numeral grows with it so the grid
+   still reads as days rather than as empty boxes. */
+@media (min-width: 1920px) {
+  .diary-page.variant-depth.variant-signature .diary-cell {
+    height: 60px;
+    min-height: 60px;
+    padding: 9px 13px 0;
+  }
+
+  .diary-page.variant-depth.variant-signature .diary-cell-day {
+    font-size: 15px;
+  }
+
+  .diary-page.variant-depth.variant-signature .diary-badge {
+    top: 7px;
+    right: 9px;
+    padding: 3px 8px;
+    font-size: 10.5px;
+  }
+
+  .diary-page.variant-depth.variant-signature .diary-cell-marks {
+    bottom: 8px;
+    left: 13px;
+  }
+
+  .diary-page.variant-depth.variant-signature .diary-paper {
+    padding: 36px 40px;
+  }
+
+  .diary-page.variant-depth.variant-signature .diary-markdown {
+    font-size: 16px;
+  }
+}
+
+@media (max-width: 700px) {
+  .diary-page.variant-depth.variant-signature .diary-cell {
+    height: 44px;
+    min-height: 44px;
+    padding: 7px 7px 0;
+  }
+
+  .diary-page.variant-depth.variant-signature .diary-paper {
+    padding: 22px;
+  }
+}
+
+/* Narrow cells cannot hold pill text without colliding with the day number:
+   the tone becomes a dot, the words stay in the cell's aria-label. */
+@media (max-width: 560px) {
+  .diary-page.variant-depth.variant-signature .diary-badge {
+    top: 7px;
+    right: 7px;
+    width: 5px;
+    height: 5px;
+    max-width: none;
+    padding: 0;
+    overflow: hidden;
+    border: 0;
+    border-radius: 999px;
+    background: var(--dp-badge-ink, var(--muted-foreground));
+    color: transparent;
+    font-size: 0;
+    text-indent: -999px;
+  }
+
+  .diary-page.variant-depth.variant-signature .diary-badge.is-lunar {
+    display: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .diary-page.variant-depth.variant-signature .diary-cell,
+  .diary-page.variant-depth.variant-signature .diary-index-row {
+    transition: none;
+  }
+}
