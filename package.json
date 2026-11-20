@@ -43,7 +43,7 @@
     "build": "vite build",
     "test": "node --test context-digest.test.ts preset-scope.test.ts",
     "prepack": "npm run build",
-    "prepublishOnly": "npm test && npm run build"
+    "prepublishOnly": "npm test"
   },
   "engines": {
     "node": ">=22"
