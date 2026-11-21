@@ -22,11 +22,12 @@ const TIME = /^\*([^*\n]+)\*$/
 
 /**
  * Parse line-by-line instead of using one greedy regex: entry bodies are
- * Markdown and may contain blank lines, so a body ends only at the next `## `
- * line or EOF.
+ * Markdown and may contain blank lines, so a body ends only at the next
+ * writer-shaped `## title` + byline block outside fenced code.
  */
 export function parseDiaryDay(markdown: string): ParsedDiaryDay {
-  const lines = markdown.split('\n')
+  const source = String(markdown).replace(/\r\n?/g, '\n')
+  const lines = source.split('\n')
   const offsets: number[] = []
   let offset = 0
   for (const line of lines) {
@@ -34,13 +35,35 @@ export function parseDiaryDay(markdown: string): ParsedDiaryDay {
     offset += line.length + 1
   }
 
-  const starts: number[] = []
-  for (let index = 0; index < lines.length; index += 1) {
-    if (TITLE.test(lines[index])) starts.push(index)
+  function headingStarts(requireByline: boolean) {
+    const starts: number[] = []
+    let fence: { char: string; length: number } | undefined
+    for (let index = 0; index < lines.length; index += 1) {
+      const line = lines[index]
+      const marker = /^\s*(`{3,}|~{3,})/.exec(line)?.[1]
+      if (marker !== undefined) {
+        if (fence === undefined) fence = { char: marker[0], length: marker.length }
+        else if (marker[0] === fence.char && marker.length >= fence.length) fence = undefined
+        continue
+      }
+      if (fence !== undefined || !TITLE.test(line)) continue
+      if (requireByline) {
+        let next = index + 1
+        while (next < lines.length && lines[next].trim() === '') next += 1
+        if (!TIME.test(lines[next] ?? '')) continue
+      }
+      starts.push(index)
+    }
+    return starts
   }
 
+  let starts = headingStarts(true)
+  // Legacy days written before bylines were mandatory: only when no writer-
+  // shaped entry exists do we treat every heading outside a fence as an entry.
+  if (starts.length === 0) starts = headingStarts(false)
+
   if (starts.length === 0) {
-    return { header: markdown, entries: [] }
+    return { header: source, entries: [] }
   }
 
   const entries = starts.map((start, entryIndex) => {
@@ -52,18 +75,18 @@ export function parseDiaryDay(markdown: string): ParsedDiaryDay {
     let bodyEnd = endLine
     while (bodyEnd > bodyStart && (lines[bodyEnd - 1] ?? '').trim() === '') bodyEnd -= 1
     const blockStart = offsets[start]
-    const blockEnd = entryIndex + 1 < starts.length ? offsets[starts[entryIndex + 1]] : markdown.length
+    const blockEnd = entryIndex + 1 < starts.length ? offsets[starts[entryIndex + 1]] : source.length
     return {
       title,
       time,
       body: lines.slice(bodyStart, bodyEnd).join('\n'),
-      raw: markdown.slice(blockStart, blockEnd),
+      raw: source.slice(blockStart, blockEnd),
       start: blockStart,
       end: blockEnd
     }
   })
 
-  return { header: markdown.slice(0, offsets[starts[0]]), entries }
+  return { header: source.slice(0, offsets[starts[0]]), entries }
 }
 
 function formatEntry(entry: Pick<DiaryEntryBlock, 'title' | 'time' | 'body'>) {

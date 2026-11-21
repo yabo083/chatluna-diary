@@ -29,6 +29,7 @@
   },
   "files": [
     "index.ts",
+    "diary-index.ts",
     "context-digest.ts",
     "entry-format.ts",
     "preset-scope.ts",
@@ -43,7 +44,7 @@
   ],
   "scripts": {
     "build": "vite build && vite build --config vite.server.config.ts",
-    "test": "node --test context-digest.test.ts preset-scope.test.ts entry-format.test.ts",
+    "test": "node --test context-digest.test.ts preset-scope.test.ts entry-format.test.ts diary-index.test.ts",
     "prepack": "npm run build",
     "prepublishOnly": "npm test"
   },

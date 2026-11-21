@@ -36,13 +36,13 @@ cat <plugin-root>/package.json
 
 从当前 WebUI/agent 的工具清单或 `index.ts` 读取。当前契约按意图拆成三个工具，每个工具带 `action`：
 
-- `diary_read` 的 `action: "list"`：轻量发现入口，返回日期、mark 等级、条目标题与首行，不含正文
+- `diary_read` 的 `action: "list"`：分页轻量索引（每次只读一页），返回日期、mark 等级、条目标题与首行（不含正文）；`before` 为排他日期（YYYY-MM-DD），`limit` 默认 30、上限 100；报告全书总天数与续页用的 `before`；包含只有贴花的日期，超限日显示为跳过
 - `diary_read` 的 `action: "read"`：默认天数、最大天数、字符上限
 - `diary_read` 的 `action: "context"`：参数、返回边界、是否排除工具噪音
 - `diary_write` 的 `action: "write"`：`mode` 默认值（普通对话 vs 定时任务）
 - `diary_write` 的 `action: "mark"`：等级范围、备注长度、语义
 - `diary_write` 的 `action: "attach"`：接受的路径根、扩展名、大小上限
-- `diary_manage` 的 `action: "export"` / `"format"` / `"delete"`：导出范围、格式化范围与返回形式；三个 action 始终对模型开放，没有插件配置开关
+- `diary_manage` 的 `action: "export"` / `"format"` / `"delete"`：三个 action 始终对模型开放，没有插件配置开关。`export` 必须显式传 `dates`（从 `list` 选），没有隐式整本导出，超输出预算会显式失败；`format` 只补缺失的日期标题并规范换行（保留正文语法/代码/硬换行），跳过超限日；`delete` 先校验每个日期存在（只有贴花也算）
 
 若工具名或 action 名与本文示例不同，**以当前清单为准**，并让 skill 使用实际名字。
 
@@ -85,8 +85,9 @@ ls <data-root>/chatluna/diary 2>/dev/null
 - 日记数据根目录的权限与备份策略
 - 工具是否限制在 owner 的私聊或插件自己的定时任务；群聊成员是否被拒绝
 - 定时任务是否只暴露 `diary_read` 与 `diary_write`（`diary_manage` 不应出现）
-- `diary_read` 的 `list` 是否只返回元数据（日期、mark 等级、标题、首行），不含正文
-- `diary_manage` 是否始终暴露 `export`/`format`/`delete`（没有权限配置项，三个 action 都在）
+- `diary_read` 的 `list` 是否只返回元数据（日期、mark 等级、标题、首行），不含正文；是否分页（`before`/`limit`，默认 30、上限 100）、给出全书总数与续页方式、包含只有贴花的日期、超限日标记跳过
+- `diary_manage` 是否始终暴露 `export`/`format`/`delete`（没有权限配置项）；`export` 是否要求显式 `dates` 且超预算失败；`format` 是否只补标题/换行并跳过超限日；`delete` 是否先校验日期（含只有贴花的日期）
+- 单日文件与 `marks.json` 是否都限制 1 MiB；超限旧日是否只能 replace/delete 而不能被普通 read/export 读取；marks 修复时是否移到时间戳备份
 - 媒体是否通过认证 action 提供，而不是公开静态路径
 - 图片允许的根目录、MIME/扩展名、大小上限
 - 外部 Markdown 图片是否被屏蔽（避免打开日记时探测外网/localhost）
@@ -110,7 +111,7 @@ plugin:
 tools:
   read: "<actual tool name; actions list/read/context>"
   write: "<actual tool name; actions write/mark/attach>"
-  manage: "<actual tool name; actions export/format/delete, always exposed>"
+  manage: "<actual tool name; actions export/format/delete, always exposed; export needs explicit dates>"
 presets:
   scope: "<current preset|explicit presetId>"
   cross_preset: "<never|schedule only>"
@@ -124,8 +125,11 @@ marks:
 limits:
   read_days: "<detected>"
   read_chars: "<detected>"
+  index_page: "<detected; default 30, max 100>"
   note_chars: "<detected>"
   image_bytes: "<detected>"
+  day_bytes: "<detected; 1 MiB>"
+  marks_bytes: "<detected; 1 MiB>"
 security:
   digest_redaction: "<detected>"
   media_auth: "<action|static>"
@@ -147,18 +151,18 @@ description: "<一句话：什么时候用；包含插件名与当前部署的�
 
 ## 工具
 
-<按实际 schema 写；三个工具分别列 action、参数、返回边界、失败条件。`diary_read` 固定提供 `list`/`read`/`context`，`diary_manage` 固定提供 `export`/`format`/`delete`，都要写。>
+<按实际 schema 写；三个工具分别列 action、参数、返回边界、失败条件。`diary_read` 固定提供 `list`/`read`/`context`（`list` 分页，不返回正文），`diary_manage` 固定提供 `export`/`format`/`delete`（`export` 必须给 `dates`），都要写。>
 
 ## 标准工作流
 
-1. 发现已有内容（`diary_read`，`action: "list"`；只含日期、mark 等级、标题与首行）。
+1. 发现已有内容（`diary_read`，`action: "list"`；只含日期、mark 等级、标题与首行；按 `before`/`limit` 翻页，默认 30 条）。
 2. 读当天节选（`diary_read`，`action: "context"`）。
 3. 读旧稿（`diary_read`，`action: "read"`，实际天数）。
 4. 选择 append/replace，并说明理由。
 5. 写正文（`diary_write`，`action: "write"`；标题/正文限制）。
 6. 贴花（`diary_write`，`action: "mark"`；等级语义）。
 7. 配图（`diary_write`，`action: "attach"`；实际根目录、扩展名、大小、Markdown 形式）。
-8. 管理（`diary_manage`，`action: "export" | "format" | "delete"`；三个 action 始终可用）。导出可直接执行；格式化与删除只在用户明确要求时执行。
+8. 管理（`diary_manage`，`action: "export" | "format" | "delete"`；三个 action 始终可用）。导出先给从 `list` 选出的 `dates`，超预算就缩小范围；格式化只补日期标题与换行；删除先确认日期存在，且只在用户明确要求时执行。
 
 ## 坑
 
@@ -180,10 +184,10 @@ description: "<一句话：什么时候用；包含插件名与当前部署的�
 每个工具写：
 
 - 精确工具名、`action` 名与必填/可选参数
-- `diary_read` 的 `list` 是轻量发现入口：写明只返回日期、mark 等级、标题与首行，不含正文，并建议先列再读
-- `diary_manage` 固定列 `export`/`format`/`delete` 三个 action，没有配置开关；`format` 与 `delete` 只在用户明确要求时使用
+- `diary_read` 的 `list`：分页（`before` 排他、`limit` 默认 30/上限 100）、只返回日期/mark 等级/标题/首行、全书总数与续页方式、含只有贴花的日期、超限日标记跳过
+- `diary_manage` 固定列 `export`/`format`/`delete` 三个 action，没有配置开关：`export` 必须显式 `dates`（来自 `list`），没有整本隐式导出，超预算显式失败；`format` 只补日期标题、规范换行、保留正文语法/代码/硬换行、跳过超限日；`delete` 先确认每个日期存在（含只有贴花），仅在用户明确要求时执行
 - `presetId` 何时可用（通常只有定时任务）
-- 上限（天数、字符、图片大小、备注长度）
+- 上限（天数、字符、图片大小、备注长度、单日与 `marks.json` 各 1 MiB）
 - 默认行为（尤其 `diary_write` 的 `action: "write"` append/replace 分支）
 - 失败时的可见错误，不要教模型重试绕过
 
@@ -197,8 +201,9 @@ description: "<一句话：什么时候用；包含插件名与当前部署的�
 
 - [ ] frontmatter 的 `name`/`description` 存在，name 与目录一致
 - [ ] 三个工具名（`diary_read` / `diary_write` / `diary_manage`，或实际名字）及各自 action 全部能在当前工具清单中找到
-- [ ] `diary_manage` 写全了 `export`/`format`/`delete` 三个 action，且没有把任何一个写成需要配置开启
-- [ ] `diary_read` 的 `list` 写清了只返回日期、mark 等级、条目标题与首行，不含正文
+- [ ] `diary_manage` 写全了 `export`/`format`/`delete`，且没有把任何一个写成需要配置开启；`export` 要求显式 `dates` 并超预算失败；`format` 只补标题/换行且跳过超限日；`delete` 先校验日期（含只有贴花）
+- [ ] `diary_read` 的 `list` 写清了分页（`before`/`limit`，默认 30/上限 100）、只含日期/mark/标题/首行、全书总数与续页方式、只有贴花的日期、超限日标记跳过
+- [ ] 单日文件与 `marks.json` 的 1 MiB 上限写对；超限旧日只能 replace/delete，普通 read/export 不可读
 - [ ] 所有参数名与 schema 一致；示例能通过校验
 - [ ] `presetId` 的权限边界写对（普通对话不得跨 preset）
 - [ ] 会话切换预设后，只采用最近一次 `chatluna:preset` 切换之后的当前段；旧段不得混入（串台检查）
@@ -213,7 +218,7 @@ description: "<一句话：什么时候用；包含插件名与当前部署的�
 ## 5. 何时重新生成
 
 - 插件主版本/工具 schema 变化
-- 工具按意图拆分或 action 集合变化（例如 `diary_read` 新增 `list`，或 `diary_manage` 增减 action）
+- 工具按意图拆分或 action/参数契约变化（例如 `list` 增加 `before`/`limit` 分页，`export` 改为必须传 `dates`）
 - 贴花语义变化（例如从五种图形改为叠印）
 - 数据根目录、媒体根/大小限制变化
 - 调度 cron、默认 append/replace 变化
@@ -228,6 +233,8 @@ description: "<一句话：什么时候用；包含插件名与当前部署的�
 - 教模型“context 没有就猜”
 - 把 `diary_write` 的 `action: "write"` 默认 append/replace 写反
 - 把 `diary_manage` 的 `format`/`delete` 写成需要插件配置开启，或漏写其中任何一个 action
+- 让模型不传 `dates` 直接导出整本，或把 `format` 写成会重写正文/代码/硬换行
 - 把 `diary_read` 的 `list` 写成会返回正文，或让 `read`/`export`/`delete` 取代它作为发现入口
+- 写 `list` 时漏掉分页（`before`/`limit`）、全书总数或“只有贴花也算一天”
 - 把访问 token 写进 skill 或示例
 - 不给验证清单，生成后不 dry-run

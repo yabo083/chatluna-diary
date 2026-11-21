@@ -58,3 +58,35 @@ test('bad indexes are rejected', () => {
   assert.throws(() => updateDiaryEntry(DAY, '2026-11-22', 9, 'x', 'y'), RangeError)
   assert.throws(() => removeDiaryEntry(DAY, '2026-11-22', -1), RangeError)
 })
+
+test('body headings and fenced examples do not split an entry', () => {
+  const source = `# 2026-11-22
+
+## 真正的标题
+*2026-11-22 Sat 09:15*
+
+开头。
+
+## 正文里的小节
+
+内容。
+
+\`\`\`md
+## 代码示例
+\`\`\`
+
+结尾。
+`
+  const parsed = parseDiaryDay(source)
+  assert.equal(parsed.entries.length, 1)
+  assert.equal(parsed.entries[0].title, '真正的标题')
+  assert.match(parsed.entries[0].body, /## 正文里的小节/)
+  assert.match(parsed.entries[0].body, /## 代码示例/)
+})
+
+test('CRLF days parse the byline and body', () => {
+  const parsed = parseDiaryDay('# 2026-11-22\r\n\r\n## 标题\r\n*2026-11-22 Sat 09:15*\r\n\r\n正文。\r\n')
+  assert.equal(parsed.entries.length, 1)
+  assert.equal(parsed.entries[0].time, '2026-11-22 Sat 09:15')
+  assert.equal(parsed.entries[0].body, '正文。')
+})

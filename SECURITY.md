@@ -10,11 +10,13 @@ Open a private security advisory or contact the maintainer through GitHub. Do no
 
 ## Tool boundary
 
-Diary tools are limited to the owner's direct chat, an authenticated WebUI conversation, or a diary-scheduled run created by this plugin. Group members sharing the preset get `FORBIDDEN`; the WebUI token remains the page-level authority. Discovery starts at `diary_read` action `list`, which returns only dates, mark levels, entry titles and first lines — never bodies. A scheduled run sees only `diary_read` and `diary_write` (`list` included); `diary_manage` is not registered for it, so management is unreachable from scheduled prompts. In direct chat, `diary_manage` always exposes `export`, `format` and `delete` to the model with no plugin config gate; deletion is expected only on an explicit user request.
+Diary tools are limited to the owner's direct chat, an authenticated WebUI conversation, or a diary-scheduled run created by this plugin. Group members sharing the preset get `FORBIDDEN`; the WebUI token remains the page-level authority. A scheduled run sees only `diary_read` and `diary_write` (`list` included); `diary_manage` is not registered for it, so management is unreachable from scheduled prompts.
+
+`diary_read` action `list` returns one bounded metadata page — dates, mark levels, entry titles and first lines, never bodies — with `before`/`limit` paging (default 30, max 100), the whole-book total, and oversized days marked skipped. In direct chat, `diary_manage` always exposes `export`, `format` and `delete` with no plugin config gate: `export` requires explicit dates chosen from `list` and fails explicitly over its output budget; `format` only adds a missing date header and normalizes line endings, skipping oversized days; `delete` verifies every named date exists, counting mark-only days, before deleting. Deletion is expected only on an explicit user request.
 
 ## Data
 
-Diary files, marks and media live under the ChatLuna data directory. They are private to the deployment account. Restrict filesystem access and backups accordingly.
+Diary files, marks and media live under the ChatLuna data directory. They are private to the deployment account. Day files and `marks.json` are capped at 1 MiB. A legacy day over the cap is unreadable to normal `read`/`export` and skipped by `format`, but can be replaced or deleted without reading it first; an oversized or damaged marks file is moved aside to a timestamped backup on repair. Restrict filesystem access and backups accordingly.
 
 ## Media
 
