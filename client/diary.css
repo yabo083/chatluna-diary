@@ -268,7 +268,7 @@ button.diary-meta-badge.is-interactive:active {
   color: var(--foreground);
 }
 
-.diary-cell.is-batch-selected::after {
+.diary-cell.is-batch-selected::before {
   position: absolute;
   inset: 0;
   border: 1px solid color-mix(in srgb, var(--foreground) 38%, transparent);
@@ -372,8 +372,7 @@ button.diary-meta-badge.is-interactive:active {
 .diary-cell.is-today::after {
   content: '';
   position: absolute;
-  right: 0;
-  bottom: 0;
+  inset: auto 0 0 auto;
   width: 13px;
   height: 13px;
   background: var(--primary);
