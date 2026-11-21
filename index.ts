@@ -1171,7 +1171,7 @@ function createManageTool() {
       }
       if (input.action === 'delete') {
         const dates = batchDates(input.dates)
-        const marks = await readMarks(call.caller, preset)
+        const marks = await readMarks(call.caller, preset, true)
         const missing = []
         for (const date of dates) {
           let exists = false
