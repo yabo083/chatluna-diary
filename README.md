@@ -13,6 +13,8 @@ A per-preset diary for ChatLuna v2 WebUI: read the day's real conversation diges
 - **`diary_attach`** copies an image from `data/chatluna/agents-work/` into the book and returns a `diary-media:` Markdown tag.
 - **Scheduled writing**: one job per preset at local 22:00 (`0 22 * * *`), with the preset locked to its own book.
 - **WebUI**: a V2 book page, calendar with marks, index, reading pane, media blob loading, and a hidden `/diary/preview` layout showcase.
+- **Management**: the books page has a small sliders menu for per-book “write today”; the selected day's gear menu holds add/edit-day/mark/run/delete. Entries are individual cards with an inline `...` edit/delete menu, and new entries use a bottom composer. There is no all-in-one management modal.
+- **Tool loading**: all diary tools are marked resident (`deferred: false`), so a scheduled run can call them even when tool search is on.
 
 ## Install
 

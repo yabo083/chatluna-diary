@@ -1,16 +1,17 @@
 import { constants } from 'node:fs'
 import { mkdir, open, readFile, readdir, realpath, rename, stat, unlink, writeFile } from 'node:fs/promises'
 import { extname, isAbsolute, join, resolve, sep } from 'node:path'
-import { randomUUID } from 'node:crypto'
+import { randomUUID, createHash } from 'node:crypto'
 import { Schema } from '@chatluna/schema'
 import { defineTool } from '@chatluna/tool'
 import { localTime, resolveFromBaseUrl } from '@chatluna/utils'
 import { ApiError } from '@chatluna/server'
 import { extractMedia, extractText, renderDigest } from './context-digest.ts'
+import { parseDiaryDay, removeDiaryEntry, updateDiaryEntry } from './entry-format.ts'
 import { currentPresetEntries } from './preset-scope.ts'
 
 export const name = 'chatluna-diary'
-export const inject = ['tools', 'presets', 'chatluna_webui', 'schedule']
+export const inject = ['tools', 'presets', 'engines', 'chatluna_webui', 'schedule']
 
 const DATE = /^\d{4}-\d{2}-\d{2}$/
 const BOOK = /^[A-Za-z0-9][A-Za-z0-9._-]*$/
@@ -162,6 +163,21 @@ function bookId(value) {
 
 function bookDirectory(ctx, preset) {
   return join(rootDirectory(ctx), bookId(preset))
+}
+
+/** Short content hash; the UI uses it for optimistic concurrency. */
+function digest(value) {
+  return createHash('sha256').update(value).digest('hex').slice(0, 16)
+}
+
+/** Only known presets may be mutated; a stale page must not fall into `default`. */
+function actionBook(ctx, presetId) {
+  const raw = typeof presetId === 'string' ? presetId.trim() : ''
+  if (raw === '' || raw === 'default') return 'default'
+  if (!BOOK.test(raw)) throw new ApiError('INVALID_ARGUMENT', `invalid diary book: ${raw}`)
+  const known = ctx.get('presets')?.list().some((record) => record.id === raw)
+  if (known !== true) throw new ApiError('NOT_FOUND', `diary book not found: ${raw}`)
+  return raw
 }
 
 function mediaDirectory(ctx, preset) {
@@ -358,14 +374,17 @@ async function buildDiaryContext(ctx, preset, date) {
   }
 }
 
+/** A `schedule:<id>` participant, whatever plugin created the job. */
+function scheduleCaller(call) {
+  const participant = call.agent?.options?.participantId
+  if (typeof participant === 'string' && participant.startsWith('schedule:')) return participant
+  if (typeof call.agentId === 'string' && call.agentId.startsWith('schedule:')) return call.agentId
+  return undefined
+}
+
 /** Resolve a `schedule:<id>` caller to one of this plugin's own diary jobs. */
 function ownScheduledJob(ctx, call) {
-  const participant = call.agent?.options?.participantId
-  const raw = typeof participant === 'string' && participant.startsWith('schedule:')
-    ? participant
-    : typeof call.agentId === 'string' && call.agentId.startsWith('schedule:')
-      ? call.agentId
-      : undefined
+  const raw = scheduleCaller(call)
   if (raw === undefined) return undefined
   const jobId = raw.slice('schedule:'.length)
   const schedule = ctx.get('schedule')
@@ -384,17 +403,28 @@ function ownScheduledJob(ctx, call) {
  * non-direct caller allowed, and only when they are this plugin's own job.
  */
 function assertDiaryAccess(ctx, call) {
-  if (ownScheduledJob(ctx, call) !== undefined) return
+  if (scheduleCaller(call) !== undefined) {
+    if (ownScheduledJob(ctx, call) !== undefined) return
+    throw new ApiError('FORBIDDEN', 'diary tools are limited to this plugin\'s own schedule')
+  }
   if (call.actor?.isDirect === true) return
   if ((call.actor?.authority ?? 0) >= 5) return
   throw new ApiError('FORBIDDEN', 'diary tools are limited to the owner in a direct chat or the diary schedule')
 }
 
 function presetOf(ctx, call, input) {
-  const own = bookId(call.agent?.options?.presetId)
+  // `agent.options.presetId` is only the preset the agent opened with; switching
+  // presets in place updates the engine's per-session slot, not that option.
+  // A diary-scheduled child has no session preset, so its job key is the book.
+  const job = ownScheduledJob(ctx, call)
+  if (scheduleCaller(call) !== undefined && job === undefined) {
+    throw new ApiError('FORBIDDEN', 'diary tools are limited to this plugin\'s own schedule')
+  }
+  const scheduled = job?.key?.startsWith(JOB_PREFIX) ? job.key.slice(JOB_PREFIX.length) : undefined
+  const current = scheduled ?? ctx.get('engines')?.presetOf(call.agent)
+  const own = bookId(current ?? call.agent?.options?.presetId)
   const explicit = typeof input?.presetId === 'string' && input.presetId.trim() !== '' ? bookId(input.presetId) : undefined
   if (explicit === undefined) return own
-  const job = ownScheduledJob(ctx, call)
   if (job !== undefined) {
     if (job.key === `${JOB_PREFIX}${explicit}`) return explicit
     call.caller?.logger?.warn?.('diary: scheduled job %s cannot target %s; locked to %s', job.id, explicit, own)
@@ -513,20 +543,124 @@ function entryParts(input) {
 }
 
 /** A day is one file; the caller picks append or replace before calling. */
-function writeEntry(ctx, preset, input, append) {
+function writeEntry(ctx, preset, input, append, expectedRevision) {
   return serialize(bookDirectory(ctx, preset), async () => {
     const date = parseDate(input.date)
     const { title, body } = entryParts(input)
     const dir = bookDirectory(ctx, preset)
     await mkdir(dir, { recursive: true, mode: 0o700 })
     const file = join(dir, `${date}.md`)
-    const existing = append ? await readDay(ctx, preset, date) : ''
+    const current = await readDay(ctx, preset, date)
+    if (expectedRevision !== undefined && digest(current) !== expectedRevision) {
+      throw new ApiError('CONFLICT', 'the diary changed while this page was open; reload and try again')
+    }
+    const existing = append ? current : ''
     const hasContent = existing.trim() !== ''
     const entry = `## ${title}\n*${localTime(Date.now())}*\n\n${body}\n`
     const content = append && hasContent ? `${existing.trimEnd()}\n\n${entry}` : `# ${date}\n\n${entry}`
     await writeAtomic(file, content)
     return { date, title, appended: append && hasContent }
   })
+}
+
+/** Rewrite one entry while keeping its original byline and every other block. */
+function updateEntry(ctx, preset, date, index, input, expected = {}) {
+  return serialize(bookDirectory(ctx, preset), async () => {
+    const { title, body } = entryParts(input)
+    const existing = await readDay(ctx, preset, date)
+    if (existing.trim() === '') throw new ApiError('NOT_FOUND', 'that day has no diary entry')
+    if (expected.revision !== undefined && digest(existing) !== expected.revision) {
+      throw new ApiError('CONFLICT', 'the diary changed while this page was open; reload and try again')
+    }
+    const parsed = parseDiaryDay(existing)
+    if (expected.digest !== undefined && (parsed.entries[index] === undefined || digest(parsed.entries[index].raw) !== expected.digest)) {
+      throw new ApiError('CONFLICT', 'this entry changed while this page was open; reload and try again')
+    }
+    let content
+    try {
+      content = updateDiaryEntry(existing, date, index, title, body)
+    } catch (error) {
+      if (error instanceof RangeError) throw new ApiError('INVALID_ARGUMENT', 'entry does not exist')
+      throw error
+    }
+    await writeAtomic(join(bookDirectory(ctx, preset), `${date}.md`), content)
+    return { date, index, title }
+  })
+}
+
+/** Remove one entry, keeping the dated file so a mark can stand alone. */
+function removeEntry(ctx, preset, date, index, expected = {}) {
+  return serialize(bookDirectory(ctx, preset), async () => {
+    const existing = await readDay(ctx, preset, date)
+    if (existing.trim() === '') throw new ApiError('NOT_FOUND', 'that day has no diary entry')
+    if (expected.revision !== undefined && digest(existing) !== expected.revision) {
+      throw new ApiError('CONFLICT', 'the diary changed while this page was open; reload and try again')
+    }
+    const parsed = parseDiaryDay(existing)
+    if (expected.digest !== undefined && (parsed.entries[index] === undefined || digest(parsed.entries[index].raw) !== expected.digest)) {
+      throw new ApiError('CONFLICT', 'this entry changed while this page was open; reload and try again')
+    }
+    let content
+    try {
+      content = removeDiaryEntry(existing, date, index)
+    } catch (error) {
+      if (error instanceof RangeError) throw new ApiError('INVALID_ARGUMENT', 'entry does not exist')
+      throw error
+    }
+    await writeAtomic(join(bookDirectory(ctx, preset), `${date}.md`), content)
+    return { date, index }
+  })
+}
+
+/** Delete the whole day file and its mark. */
+function removeDay(ctx, preset, date, expectedRevision) {
+  return serialize(bookDirectory(ctx, preset), async () => {
+    const current = await readDay(ctx, preset, date)
+    if (expectedRevision !== undefined && digest(current) !== expectedRevision) {
+      throw new ApiError('CONFLICT', 'the diary changed while this page was open; reload and try again')
+    }
+    await unlink(join(bookDirectory(ctx, preset), `${date}.md`)).catch((error) => {
+      if (error.code !== 'ENOENT') throw error
+    })
+    const marks = await readMarks(ctx, preset, true)
+    if (marks[date] !== undefined) {
+      delete marks[date]
+      await writeMarks(ctx, preset, marks)
+    }
+    return { date }
+  })
+}
+
+/** Replace the whole day from the inline Markdown editor. */
+function replaceDay(ctx, preset, date, markdown, expectedRevision) {
+  return serialize(bookDirectory(ctx, preset), async () => {
+    const current = await readDay(ctx, preset, date)
+    if (expectedRevision !== undefined && digest(current) !== expectedRevision) {
+      throw new ApiError('CONFLICT', 'the diary changed while this page was open; reload and try again')
+    }
+    let content = String(markdown ?? '').replace(/\r\n/g, '\n').trimEnd()
+    if (content.length > 128_000) throw new ApiError('INVALID_ARGUMENT', 'the day is too long to save')
+    if (!new RegExp(`^# ${date}(?:\\s|$)`).test(content)) content = content === '' ? `# ${date}` : `# ${date}\n\n${content}`
+    await mkdir(bookDirectory(ctx, preset), { recursive: true, mode: 0o700 })
+    await writeAtomic(join(bookDirectory(ctx, preset), `${date}.md`), `${content}\n`)
+    return { date, revision: digest(`${content}\n`) }
+  })
+}
+
+function removeMark(ctx, preset, date) {
+  return serialize(bookDirectory(ctx, preset), async () => {
+    const marks = await readMarks(ctx, preset, true)
+    const removed = marks[date] !== undefined
+    if (removed) {
+      delete marks[date]
+      await writeMarks(ctx, preset, marks)
+    }
+    return { date, removed }
+  })
+}
+
+function refreshDiary(ctx) {
+  for (const key of ['diary.dates', 'diary.entry', 'diary.books', 'diary.marks']) ctx.chatluna_webui.refresh(key)
 }
 
 async function listDates(ctx, preset) {
@@ -697,7 +831,7 @@ const writeTool = defineTool({
     mode: Schema.string().description('append adds an entry to the day, replace rewrites the day. Default: the configured write mode, append unless changed.'),
     presetId: Schema.string().description('Diary book to write; only needed by a scheduled job targeting another preset.')
   }),
-  traits: { effect: 'write' },
+  traits: { effect: 'write', deferred: false },
   async run(input, call) {
     assertDiaryAccess(call.caller, call)
     const preset = presetOf(call.caller, call, input)
@@ -726,7 +860,7 @@ const readTool = defineTool({
     days: Schema.number().min(1).max(MAX_DAYS).description('How many days to include, counting back from date. Default 1.'),
     presetId: Schema.string().description('Diary book to read; only needed by a scheduled job targeting another preset.')
   }),
-  traits: { effect: 'read' },
+  traits: { effect: 'read', deferred: false },
   async run(input, call) {
     assertDiaryAccess(call.caller, call)
     return readRange(call.caller, presetOf(call.caller, call, input), parseDate(input.date), input.days)
@@ -748,7 +882,7 @@ const markTool = defineTool({
     note: Schema.string().description('Optional note, at most 80 characters.'),
     presetId: Schema.string().description('Diary book to mark; only needed by a scheduled job targeting another preset.')
   }),
-  traits: { effect: 'write' },
+  traits: { effect: 'write', deferred: false },
   async run(input, call) {
     assertDiaryAccess(call.caller, call)
     const mark = await setMark(call.caller, presetOf(call.caller, call, input), input)
@@ -772,7 +906,7 @@ const contextTool = defineTool({
     date: Schema.string().description('YYYY-MM-DD in server local time; defaults to today.'),
     presetId: Schema.string().description('Diary book; only needed by a scheduled job targeting another preset.')
   }),
-  traits: { effect: 'read' },
+  traits: { effect: 'read', deferred: false },
   async run(input, call) {
     assertDiaryAccess(call.caller, call)
     return (await buildDiaryContext(call.caller, presetOf(call.caller, call, input), parseDate(input.date))).text
@@ -793,7 +927,7 @@ const attachTool = defineTool({
     alt: Schema.string().description('Optional alt text and caption, at most 80 characters.'),
     presetId: Schema.string().description('Diary book; only needed by a scheduled job targeting another preset.')
   }),
-  traits: { effect: 'write' },
+  traits: { effect: 'write', deferred: false },
   async run(input, call) {
     assertDiaryAccess(call.caller, call)
     const preset = presetOf(call.caller, call, input)
@@ -912,6 +1046,133 @@ export function apply(ctx, config = {}) {
   )
 
   const BookParams = Schema.object({ presetId: Schema.string().default('default') })
+  const EntryInput = Schema.object({
+    presetId: Schema.string().default('default'),
+    date: Schema.string().required(),
+    title: Schema.string().required(),
+    body: Schema.string().required(),
+    index: Schema.number().min(0),
+    revision: Schema.string(),
+    digest: Schema.string()
+  })
+  const EntryRemoveInput = Schema.object({
+    presetId: Schema.string().default('default'),
+    date: Schema.string().required(),
+    index: Schema.number().min(0).required(),
+    revision: Schema.string(),
+    digest: Schema.string()
+  })
+  const DayInput = Schema.object({
+    presetId: Schema.string().default('default'),
+    date: Schema.string().required(),
+    revision: Schema.string()
+  })
+  const DayWriteInput = Schema.object({
+    presetId: Schema.string().default('default'),
+    date: Schema.string().required(),
+    markdown: Schema.string().required(),
+    revision: Schema.string()
+  })
+  const MarkInput = Schema.object({
+    presetId: Schema.string().default('default'),
+    date: Schema.string().required(),
+    level: Schema.number().min(1).max(5).required(),
+    note: Schema.string()
+  })
+  const RunInput = Schema.object({ presetId: Schema.string().default('default') })
+
+  ctx.chatluna_webui.action('diary.entry.save', { input: EntryInput }, async ({ presetId, date, title, body, index, revision, digest }) => {
+    const preset = actionBook(ctx, presetId)
+    const day = parseDate(date)
+    const saved = index === undefined
+      ? await writeEntry(ctx, preset, { date: day, title, body }, true, revision)
+      : await updateEntry(ctx, preset, day, index, { title, body }, { revision, digest })
+    refreshDiary(ctx)
+    return saved
+  })
+
+  ctx.chatluna_webui.action('diary.entry.remove', { input: EntryRemoveInput }, async ({ presetId, date, index, revision, digest }) => {
+    const preset = actionBook(ctx, presetId)
+    const day = parseDate(date)
+    const removed = await removeEntry(ctx, preset, day, index, { revision, digest })
+    queueMediaSweep(ctx, preset)
+    refreshDiary(ctx)
+    return removed
+  })
+
+  ctx.chatluna_webui.action('diary.day.write', { input: DayWriteInput }, async ({ presetId, date, markdown, revision }) => {
+    const preset = actionBook(ctx, presetId)
+    const day = parseDate(date)
+    const written = await replaceDay(ctx, preset, day, markdown, revision)
+    queueMediaSweep(ctx, preset)
+    refreshDiary(ctx)
+    return written
+  })
+
+  ctx.chatluna_webui.action('diary.day.remove', { input: DayInput }, async ({ presetId, date, revision }) => {
+    const preset = actionBook(ctx, presetId)
+    const day = parseDate(date)
+    const removed = await removeDay(ctx, preset, day, revision)
+    queueMediaSweep(ctx, preset)
+    refreshDiary(ctx)
+    return removed
+  })
+
+  ctx.chatluna_webui.action('diary.mark.save', { input: MarkInput }, async ({ presetId, date, level, note }) => {
+    const preset = actionBook(ctx, presetId)
+    const mark = await setMark(ctx, preset, { date, level, note })
+    refreshDiary(ctx)
+    return mark
+  })
+
+  ctx.chatluna_webui.action('diary.mark.remove', { input: DayInput }, async ({ presetId, date }) => {
+    const preset = actionBook(ctx, presetId)
+    const removed = await removeMark(ctx, preset, parseDate(date))
+    refreshDiary(ctx)
+    return removed
+  })
+
+  ctx.chatluna_webui.action('diary.run', { input: RunInput }, async ({ presetId }) => {
+    const preset = actionBook(ctx, presetId)
+    const schedule = ctx.get('schedule')
+    if (schedule === undefined) throw new ApiError('UNAVAILABLE', 'schedule service is not loaded')
+    const job = schedule.list({ owner: 'plugin' }).find((entry) => entry.key === `${JOB_PREFIX}${preset}`)
+    if (job === undefined) throw new ApiError('UNAVAILABLE', 'no diary job is registered; enable the diary schedule first')
+    const startedAt = Date.now()
+    const today = localTime(Date.now()).slice(0, 10)
+    const before = await readDay(ctx, preset, today)
+    if (!await schedule.fire(job.id)) throw new ApiError('NOT_FOUND', 'diary job not found')
+    const run = (await schedule.runsOf(job.id, 5)).find((row) => row.at >= startedAt - 1000)
+      ?? (await schedule.runsOf(job.id, 1))[0]
+    const detail = typeof run?.detail === 'object' && run.detail !== null ? run.detail as Record<string, unknown> : undefined
+    const backgroundId = typeof detail?.background === 'string' ? detail.background : undefined
+    const item = backgroundId === undefined ? undefined : ctx.get('background')?.get(backgroundId)
+    if (item === undefined) {
+      // A skipped or non-background run still has a real schedule result.
+      return { status: detail?.skipped === undefined ? 'started' : 'skipped', background: backgroundId, detail }
+    }
+    const snapshot = await item.wait({ timeout: 180_000 })
+    const after = await readDay(ctx, preset, today)
+    const wrote = digest(after) !== digest(before)
+    refreshDiary(ctx)
+    if (snapshot.status === 'completed' && !wrote) {
+      return {
+        status: 'failed',
+        background: backgroundId,
+        error: 'run completed without writing a diary entry',
+        wrote,
+        durationMs: snapshot.settledAt === undefined ? undefined : snapshot.settledAt - snapshot.createdAt
+      }
+    }
+    return {
+      status: snapshot.status,
+      background: backgroundId,
+      error: snapshot.error,
+      result: snapshot.result,
+      wrote,
+      durationMs: snapshot.settledAt === undefined ? undefined : snapshot.settledAt - snapshot.createdAt
+    }
+  })
 
   ctx.chatluna_webui.state('diary.books', {
     refreshOn: ['presets/change'],
@@ -935,7 +1196,20 @@ export function apply(ctx, config = {}) {
         const key = parseDate(date)
         const markdown = await readDay(ctx, presetId, key)
         const marks = await readMarks(ctx, presetId)
-        return { date: key, markdown, mark: marks[key] ?? null }
+        const parsed = parseDiaryDay(markdown)
+        return {
+          date: key,
+          revision: markdown === '' ? null : digest(markdown),
+          markdown,
+          mark: marks[key] ?? null,
+          entries: parsed.entries.map((entry, index) => ({
+            index,
+            digest: digest(entry.raw),
+            title: entry.title,
+            time: entry.time,
+            body: entry.body
+          }))
+        }
       } catch {
         return null
       }

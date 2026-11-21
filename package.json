@@ -30,6 +30,7 @@
   "files": [
     "index.ts",
     "context-digest.ts",
+    "entry-format.ts",
     "preset-scope.ts",
     "server.js",
     "client",
@@ -42,7 +43,7 @@
   ],
   "scripts": {
     "build": "vite build && vite build --config vite.server.config.ts",
-    "test": "node --test context-digest.test.ts preset-scope.test.ts",
+    "test": "node --test context-digest.test.ts preset-scope.test.ts entry-format.test.ts",
     "prepack": "npm run build",
     "prepublishOnly": "npm test"
   },

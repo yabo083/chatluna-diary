@@ -1,10 +1,11 @@
 import * as React from 'react'
 import MarkdownIt from 'markdown-it-ts'
-import { Calendar, ChevronLeft, ChevronRight } from 'lucide-react'
+import { apiErrorMessage, callAction, toast, useLive } from '@chatluna/ui-client/client'
+import { Calendar, ChevronLeft, ChevronRight, Plus, Sparkles } from 'lucide-react'
 import { useNavigate, useParams } from 'react-router'
-import { callAction, useLive } from '@chatluna/ui-client/client'
-import type { DiaryDateRow, DiaryMark } from './types'
+import type { DiaryDateRow, DiaryEntryRow, DiaryMark } from './types'
 import { calendarBadge } from './calendar-meta'
+import { DayMenu, EntryMenu, InlineConfirm, InlineEntryForm, MarkEditor } from './controls'
 import { MarkStamp, type MarkLevel } from './stickers'
 import './diary.css'
 import './styles/variant-signature.css'
@@ -43,14 +44,6 @@ markdown.renderer.rules.link_open = (tokens, index, options, env, self) => {
 
 const WEEKDAYS = ['一', '二', '三', '四', '五', '六', '日']
 const WEEKDAY_NAMES = ['周一', '周二', '周三', '周四', '周五', '周六', '周日']
-
-/** The page header already names the day; the file's date header and byline date repeat it. */
-function displayMarkdown(markdown: string) {
-  return markdown
-    .replace(/^#\s*\d{4}-\d{2}-\d{2}\s*\n+/, '')
-    .replace(/^(##\s+[^\n]+\n\*)\d{4}-\d{2}-\d{2}\s+/gm, '$1')
-    .trimStart()
-}
 
 function shiftMonth(month: string, delta: number) {
   const [year, value] = month.split('-').map(Number)
@@ -130,6 +123,23 @@ export function DiaryBookPage() {
   const [selected, setSelected] = React.useState(today)
   const entry = useLive('diary.entry', { presetId, date: selected })
   const book = books.data?.books.find((row) => row.presetId === presetId)
+  const [running, setRunning] = React.useState(false)
+  const [composeOpen, setComposeOpen] = React.useState(false)
+  const [editing, setEditing] = React.useState<DiaryEntryRow>()
+  const [dayEditing, setDayEditing] = React.useState(false)
+  const [dayDraft, setDayDraft] = React.useState('')
+  const [markOpen, setMarkOpen] = React.useState(false)
+  const [busy, setBusy] = React.useState<string>()
+  const [confirm, setConfirm] = React.useState<{ kind: 'entry'; row: DiaryEntryRow } | { kind: 'day' }>()
+
+  React.useEffect(() => {
+    setComposeOpen(false)
+    setEditing(undefined)
+    setDayEditing(false)
+    setMarkOpen(false)
+    setConfirm(undefined)
+    setBusy(undefined)
+  }, [presetId, selected])
 
   React.useEffect(() => {
     setMonth(today.slice(0, 7))
@@ -179,11 +189,9 @@ export function DiaryBookPage() {
   ]
   while (cells.length % 7 !== 0) cells.push(undefined)
 
-  const html = React.useMemo(
-    () => markdown.render(displayMarkdown(entry.data?.markdown ?? '')),
-    [entry.data?.markdown]
-  )
+  const entries = entry.data?.entries ?? []
   const entryRef = React.useRef<HTMLElement>(null)
+  const composerRef = React.useRef<HTMLDivElement>(null)
 
   React.useEffect(() => {
     const root = entryRef.current
@@ -209,13 +217,167 @@ export function DiaryBookPage() {
       cancelled = true
       observer.disconnect()
     }
-  }, [html, presetId])
+  }, [entry.data, presetId, editing, dayEditing])
 
   const selectedMark = entry.data?.mark ?? marksByDate.get(selected)
 
   const goToday = () => {
     setMonth(today.slice(0, 7))
     setSelected(today)
+  }
+
+  const saveNew = async (title: string, body: string) => {
+    if (title.trim() === '') return toast.error('标题不能为空')
+    if (body.trim() === '') return toast.error('正文不能为空')
+    setBusy('create')
+    try {
+      await callAction('diary.entry.save', {
+        presetId,
+        date: selected,
+        title: title.trim(),
+        body,
+        ...(entry.data?.revision === null || entry.data?.revision === undefined ? {} : { revision: entry.data.revision })
+      })
+      toast.success('已追加一篇')
+      setComposeOpen(false)
+    } catch (error) {
+      toast.error('追加失败', { description: apiErrorMessage(error) })
+    } finally {
+      setBusy(undefined)
+    }
+  }
+
+  const saveEdit = async (title: string, body: string) => {
+    if (editing === undefined) return
+    if (title.trim() === '') return toast.error('标题不能为空')
+    if (body.trim() === '') return toast.error('正文不能为空')
+    setBusy('edit')
+    try {
+      await callAction('diary.entry.save', {
+        presetId,
+        date: selected,
+        index: editing.index,
+        digest: editing.digest,
+        title: title.trim(),
+        body,
+        ...(entry.data?.revision === null || entry.data?.revision === undefined ? {} : { revision: entry.data.revision })
+      })
+      toast.success('已保存修改')
+      setEditing(undefined)
+    } catch (error) {
+      toast.error('保存失败', { description: apiErrorMessage(error) })
+    } finally {
+      setBusy(undefined)
+    }
+  }
+
+  const saveDay = async () => {
+    setBusy('day')
+    try {
+      await callAction('diary.day.write', {
+        presetId,
+        date: selected,
+        markdown: dayDraft,
+        ...(entry.data?.revision === null || entry.data?.revision === undefined ? {} : { revision: entry.data.revision })
+      })
+      toast.success('已保存当天日记')
+      setDayEditing(false)
+    } catch (error) {
+      toast.error('保存失败', { description: apiErrorMessage(error) })
+    } finally {
+      setBusy(undefined)
+    }
+  }
+
+  const removeEntry = async () => {
+    if (confirm?.kind !== 'entry') return
+    setBusy('delete-entry')
+    try {
+      await callAction('diary.entry.remove', {
+        presetId,
+        date: selected,
+        index: confirm.row.index,
+        digest: confirm.row.digest,
+        ...(entry.data?.revision === null || entry.data?.revision === undefined ? {} : { revision: entry.data.revision })
+      })
+      toast.success('已删除这一篇')
+      if (editing?.index === confirm.row.index) setEditing(undefined)
+      setConfirm(undefined)
+    } catch (error) {
+      toast.error('删除失败', { description: apiErrorMessage(error) })
+    } finally {
+      setBusy(undefined)
+    }
+  }
+
+  const removeDay = async () => {
+    setBusy('delete-day')
+    try {
+      await callAction('diary.day.remove', {
+        presetId,
+        date: selected,
+        ...(entry.data?.revision === null || entry.data?.revision === undefined ? {} : { revision: entry.data.revision })
+      })
+      toast.success('已删除当天日记')
+      setConfirm(undefined)
+      setDayEditing(false)
+    } catch (error) {
+      toast.error('删除失败', { description: apiErrorMessage(error) })
+    } finally {
+      setBusy(undefined)
+    }
+  }
+
+  const saveMark = async (level: number, note: string) => {
+    setBusy('mark')
+    try {
+      await callAction('diary.mark.save', { presetId, date: selected, level, note: note || undefined })
+      toast.success('贴花已保存')
+      setMarkOpen(false)
+    } catch (error) {
+      toast.error('贴花保存失败', { description: apiErrorMessage(error) })
+    } finally {
+      setBusy(undefined)
+    }
+  }
+
+  const removeMark = async () => {
+    setBusy('mark')
+    try {
+      await callAction('diary.mark.remove', { presetId, date: selected })
+      toast.success('贴花已移除')
+      setMarkOpen(false)
+    } catch (error) {
+      toast.error('贴花移除失败', { description: apiErrorMessage(error) })
+    } finally {
+      setBusy(undefined)
+    }
+  }
+
+  React.useEffect(() => {
+    if (!composeOpen) return
+    requestAnimationFrame(() => composerRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' }))
+  }, [composeOpen])
+
+  const runDiary = async () => {
+    if (selected !== today) return toast.info('只能生成今天的日记')
+    setRunning(true)
+    try {
+      const result = await callAction('diary.run', { presetId })
+      if (result.status === 'completed') {
+        toast.success('日记已写入')
+      } else if (result.status === 'failed' || result.status === 'cancelled') {
+        toast.error('日记写入失败', { description: result.error ?? result.status })
+      } else if (result.status === 'skipped') {
+        toast.info('这次没有运行', { description: '上一次任务可能还在执行。' })
+      } else {
+        toast.info('日记任务已触发', { description: result.background === undefined ? result.status : `后台任务 ${result.background}` })
+      }
+    } catch (error) {
+      toast.error('触发失败', { description: apiErrorMessage(error) })
+    } finally {
+      setRunning(false)
+    }
   }
 
   return (
@@ -375,23 +537,194 @@ export function DiaryBookPage() {
               </div>
               <span className="diary-reading-rule" aria-hidden="true" />
             </div>
-            {selectedMark === undefined ? null : (
-              <div className="diary-mark-note">
-                <DiaryMark level={selectedMark.level} note={selectedMark.note} />
-                <span>{markLabel(selectedMark.level, selectedMark.note)}</span>
-              </div>
-            )}
+            <div className="diary-reading-tools">
+              {selectedMark === undefined ? null : (
+                <div className="diary-mark-note">
+                  <DiaryMark level={selectedMark.level} note={selectedMark.note} />
+                  <span>{markLabel(selectedMark.level, selectedMark.note)}</span>
+                </div>
+              )}
+              <DayMenu
+                isToday={selected === today}
+                running={running}
+                onCompose={() => {
+                  setEditing(undefined)
+                  setDayEditing(false)
+                  setMarkOpen(false)
+                  setConfirm(undefined)
+                  setComposeOpen(true)
+                }}
+                onEditDay={() => {
+                  setDayDraft(entry.data?.markdown.trim() ? entry.data.markdown : `# ${selected}\n`)
+                  setComposeOpen(false)
+                  setEditing(undefined)
+                  setMarkOpen(false)
+                  setConfirm(undefined)
+                  setDayEditing(true)
+                }}
+                onMark={() => {
+                  setComposeOpen(false)
+                  setEditing(undefined)
+                  setDayEditing(false)
+                  setConfirm(undefined)
+                  setMarkOpen(true)
+                }}
+                onRun={() => void runDiary()}
+                onDelete={() => {
+                  setComposeOpen(false)
+                  setEditing(undefined)
+                  setDayEditing(false)
+                  setMarkOpen(false)
+                  setConfirm({ kind: 'day' })
+                }}
+              />
+            </div>
           </header>
 
-          <article className="diary-paper" ref={entryRef} aria-busy={entry.status === 'loading'}>
-            {entry.status === 'loading' ? (
-              <p className="diary-hint">正在翻到 {selected}……</p>
-            ) : entry.data === null || entry.data.markdown.trim() === '' ? (
-              <p className="diary-empty">这一天还是空白。也许可以留一句话给它。</p>
-            ) : (
-              <div className="diary-markdown" dangerouslySetInnerHTML={{ __html: html }} />
-            )}
-          </article>
+          {confirm?.kind === 'day' ? (
+            <InlineConfirm
+              message={`确定删除 ${selected} 的整篇日记吗？包含全部条目与贴花，不可撤销。`}
+              busy={busy === 'delete-day'}
+              confirmLabel="彻底删除"
+              onConfirm={() => void removeDay()}
+              onCancel={() => setConfirm(undefined)}
+            />
+          ) : null}
+
+          {markOpen ? (
+            <MarkEditor
+              mark={entry.data?.mark ?? null}
+              busy={busy === 'mark'}
+              onSave={(level, note) => void saveMark(level, note)}
+              onRemove={() => void removeMark()}
+              onCancel={() => setMarkOpen(false)}
+            />
+          ) : null}
+
+          {dayEditing ? (
+            <section className="diary-paper diary-day-editor">
+              <div className="diary-entry-head">
+                <div>
+                  <h3>编辑当天</h3>
+                  <p className="diary-entry-time">Markdown 源文；保存会整篇替换。</p>
+                </div>
+              </div>
+              <textarea
+                className="diary-textarea diary-day-textarea"
+                value={dayDraft}
+                onChange={(event) => setDayDraft(event.target.value)}
+                spellCheck={false}
+              />
+              <div className="diary-inline-actions">
+                <button type="button" className="diary-action is-ghost" onClick={() => setDayEditing(false)} disabled={busy === 'day'}>
+                  取消
+                </button>
+                <button type="button" className="diary-action is-primary" onClick={() => void saveDay()} disabled={busy === 'day'}>
+                  {busy === 'day' ? '保存中…' : '保存当天'}
+                </button>
+              </div>
+            </section>
+          ) : (
+            <article className="diary-paper" ref={entryRef} aria-busy={entry.status === 'loading'}>
+              {entry.status === 'loading' ? (
+                <p className="diary-hint">正在翻到 {selected}……</p>
+              ) : entries.length > 0 ? (
+                entries.map((row) => (
+                  <section className="diary-entry" key={`${row.index}:${row.digest}`}>
+                    <header className="diary-entry-head">
+                      <div className="diary-entry-title">
+                        <h3>{row.title}</h3>
+                        <time className="diary-entry-time">{row.time}</time>
+                      </div>
+                      {editing?.index === row.index ? null : (
+                        <EntryMenu
+                          title={row.title}
+                          onEdit={() => {
+                            setComposeOpen(false)
+                            setEditing(row)
+                            setConfirm(undefined)
+                          }}
+                          onDelete={() => {
+                            setEditing(undefined)
+                            setConfirm({ kind: 'entry', row })
+                          }}
+                        />
+                      )}
+                    </header>
+                    {editing?.index === row.index ? (
+                      <InlineEntryForm
+                        heading="编辑这一篇"
+                        title={row.title}
+                        body={row.body}
+                        busy={busy === 'edit'}
+                        onSave={(title, body) => void saveEdit(title, body)}
+                        onCancel={() => setEditing(undefined)}
+                      />
+                    ) : (
+                      <div className="diary-markdown" dangerouslySetInnerHTML={{ __html: markdown.render(row.body) }} />
+                    )}
+                    {confirm?.kind === 'entry' && confirm.row.index === row.index ? (
+                      <InlineConfirm
+                        message={`确定删除《${row.title}》？只删除这一篇，不可撤销。`}
+                        busy={busy === 'delete-entry'}
+                        onConfirm={() => void removeEntry()}
+                        onCancel={() => setConfirm(undefined)}
+                      />
+                    ) : null}
+                  </section>
+                ))
+              ) : (entry.data?.markdown.trim() ?? '') !== '' ? (
+                <section className="diary-entry">
+                  <header className="diary-entry-head">
+                    <div className="diary-entry-title">
+                      <h3>无标题随笔</h3>
+                      <time className="diary-entry-time">旧格式内容</time>
+                    </div>
+                  </header>
+                  <div
+                    className="diary-markdown"
+                    dangerouslySetInnerHTML={{
+                      __html: markdown.render((entry.data?.markdown ?? '').replace(/^#\s*\d{4}-\d{2}-\d{2}\s*\n+/, ''))
+                    }}
+                  />
+                </section>
+              ) : composeOpen ? null : (
+                <div className="diary-empty-state">
+                  <p className="diary-empty">这一天还是空白。也许可以留一句话给它。</p>
+                  <div className="diary-inline-actions">
+                    <button type="button" className="diary-action" onClick={() => setComposeOpen(true)}>
+                      <Plus />
+                      手动写一笔
+                    </button>
+                    {selected === today ? (
+                      <button type="button" className="diary-action is-primary" onClick={() => void runDiary()} disabled={running}>
+                        <Sparkles />
+                        {running ? '正在写…' : '让 AI 写今天'}
+                      </button>
+                    ) : null}
+                  </div>
+                </div>
+              )}
+
+              <div className="diary-composer" ref={composerRef}>
+                {composeOpen ? (
+                  <InlineEntryForm
+                    heading="新增一篇"
+                    title=""
+                    body=""
+                    busy={busy === 'create'}
+                    onSave={(title, body) => void saveNew(title, body)}
+                    onCancel={() => setComposeOpen(false)}
+                  />
+                ) : (
+                  <button type="button" className="diary-composer-trigger" onClick={() => setComposeOpen(true)}>
+                    <Plus />
+                    写一笔
+                  </button>
+                )}
+              </div>
+            </article>
+          )}
         </section>
       </div>
     </div>
