@@ -45,6 +45,8 @@ const MAX_TOOL_EXPORT_CHARS = 48_000
 const MAX_WEBUI_EXPORT_BYTES = 16 * 1024 * 1024
 /** A context read is bounded in time; partial output must say so. */
 const CONTEXT_READ_DEADLINE_MS = 12_000
+/** New days are picked up for a few short passes, never an unbounded chase. */
+const FORMAT_MAX_PASSES = 3
 const JOB_PREFIX = 'chatluna-diary:'
 
 /** Defaults for every tunable the plugin page exposes; Settings mirrors these. */
@@ -232,18 +234,20 @@ async function workspaceImage(ctx, value) {
  * Every human message one preset produced in one local day, shaped for the pure digest.
  * Noise is dropped here so the renderer only ever sees user and assistant turns.
  */
-async function readDayMessages(view, start) {
+async function readDayMessages(view, start, isCancelled = () => false) {
   // The session store has no time-range read. Walk newest-first until the day
   // starts instead of deserializing the whole transcript (which is O(session
   // lifetime) and serialized ahead of other session I/O).
   const entries = []
   let before
   for (let page = 0; page < 10 && entries.length < 2000; page += 1) {
+    if (isCancelled()) break
     const batch = await view.read({
       kind: 'message',
       last: 200,
       ...(before === undefined ? {} : { before })
     })
+    if (isCancelled()) break
     if (batch.length === 0) break
     entries.unshift(...batch)
     before = batch[0].n
@@ -320,11 +324,12 @@ async function collectDayMessages(ctx, preset, date) {
     const fetched = await Promise.race([
       Promise.allSettled(batch.map(async ({ row, scene, conversation }) => {
         try {
+          if (Date.now() >= deadline) return undefined
           const view = await sessions.view(row.id)
-          if (view === undefined) return undefined
+          if (view === undefined || Date.now() >= deadline) return undefined
           // The row carries the current preset, so a session that switched presets
           // still yields the old preset's messages. Keep only the current segment.
-          const entries = currentPresetEntries(await readDayMessages(view, start), preset, bookId)
+          const entries = currentPresetEntries(await readDayMessages(view, start, () => Date.now() >= deadline), preset, bookId)
           return { scene, conversation, entries }
         } catch {
           return undefined
@@ -868,35 +873,42 @@ async function exportDays(ctx, preset, dates, maxChars = Infinity, maxBytes = In
 
 /** Add a missing date header and normalize line endings; never rewrite body syntax. */
 async function formatBook(ctx, preset) {
-  const dates = (await listDates(ctx, preset)).map(({ date }) => date).sort()
+  const processed = new Set()
   let changed = 0
   let skipped = 0
-  for (const date of dates) {
-    await serialize(bookDirectory(ctx, preset), async () => {
-      if (!await dayExists(ctx, preset, date)) return
-      let raw
-      try {
-        raw = await readDay(ctx, preset, date)
-      } catch (error) {
-        if (error instanceof ApiError && /exceeds .* bytes/.test(error.message)) {
-          skipped += 1
-          ctx.logger.warn('diary format skipped oversized day %s/%s', preset, date)
-          return
+  for (let pass = 0; pass < FORMAT_MAX_PASSES; pass += 1) {
+    const dates = (await listDates(ctx, preset)).map(({ date }) => date)
+    const work = dates.filter((date) => !processed.has(date)).sort()
+    if (work.length === 0) break
+    for (const date of work) {
+      await serialize(bookDirectory(ctx, preset), async () => {
+        if (!await dayExists(ctx, preset, date)) return
+        let raw
+        try {
+          raw = await readDay(ctx, preset, date)
+        } catch (error) {
+          if (error instanceof ApiError && /exceeds .* bytes/.test(error.message)) {
+            skipped += 1
+            ctx.logger.warn('diary format skipped oversized day %s/%s', preset, date)
+            return
+          }
+          throw error
         }
-        throw error
-      }
-      let content = raw.replace(/\r\n?/g, '\n').trimEnd()
-      if (!new RegExp(`^# ${date}(?:\\s|$)`).test(content)) {
-        content = content === '' ? `# ${date}` : `# ${date}\n\n${content}`
-      }
-      const next = `${content}\n`
-      if (next === raw) return
-      assertDayBytes(next, date)
-      await writeAtomic(join(bookDirectory(ctx, preset), `${date}.md`), next)
-      changed += 1
-    })
+        let content = raw.replace(/\r\n?/g, '\n').trimEnd()
+        if (!new RegExp(`^# ${date}(?:\\s|$)`).test(content)) {
+          content = content === '' ? `# ${date}` : `# ${date}\n\n${content}`
+        }
+        const next = `${content}\n`
+        if (next === raw) return
+        assertDayBytes(next, date)
+        await writeAtomic(join(bookDirectory(ctx, preset), `${date}.md`), next)
+        changed += 1
+      })
+      processed.add(date)
+    }
   }
-  return { dates, changed, skipped }
+  const pending = (await listDates(ctx, preset)).filter(({ date }) => !processed.has(date)).length
+  return { dates: [...processed].sort(), changed, skipped, pending }
 }
 
 async function listDates(ctx, preset) {
@@ -1270,7 +1282,7 @@ function createManageTool() {
       if (input.action === 'format') {
         const result = await formatBook(call.caller, preset)
         refreshDiary(call.caller)
-        return `已格式化 ${result.dates.length} 天，其中 ${result.changed} 天有改动${result.skipped > 0 ? `，${result.skipped} 天因文件过大跳过` : ''}。`
+        return `已格式化 ${result.dates.length} 天，其中 ${result.changed} 天有改动${result.skipped > 0 ? `，${result.skipped} 天因文件过大跳过` : ''}${result.pending > 0 ? `，${result.pending} 天在扫描期间新建、本次未格式化` : ''}。`
       }
       if (input.action === 'delete') {
         const dates = batchDates(input.dates)

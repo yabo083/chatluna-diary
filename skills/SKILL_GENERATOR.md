@@ -42,7 +42,7 @@ cat <plugin-root>/package.json
 - `diary_write` 的 `action: "write"`：`mode` 默认值（普通对话 vs 定时任务）
 - `diary_write` 的 `action: "mark"`：等级范围、备注长度、语义
 - `diary_write` 的 `action: "attach"`：接受的路径根、扩展名、大小上限
-- `diary_manage` 的 `action: "export"` / `"format"` / `"delete"`：三个 action 始终对模型开放，没有插件配置开关。`export` 必须显式传 `dates`（从 `list` 选），没有隐式整本导出，超输出预算会显式失败；`format` 只补缺失的日期标题并规范换行（保留正文语法/代码/硬换行），跳过超限日；`delete` 幂等：存在日期与贴花在一把书锁内先写 marks、再幂等 unlink，本就不存在的日期作为 absent 报告而不是让整批失败。
+- `diary_manage` 的 `action: "export"` / `"format"` / `"delete"`：三个 action 始终对模型开放，没有插件配置开关。`export` 必须显式传 `dates`（从 `list` 选），没有隐式整本导出，超输出预算会显式失败；`format` 只补缺失的日期标题并规范换行（保留正文语法/代码/硬换行），跳过超限日，最多 3 轮短扫描；扫描期间新建且仍未处理的日期作为 pending 报告；`delete` 幂等：存在日期与贴花在一把书锁内先写 marks、再幂等 unlink，本就不存在的日期作为 absent 报告而不是让整批失败。
 
 若工具名或 action 名与本文示例不同，**以当前清单为准**，并让 skill 使用实际名字。
 
