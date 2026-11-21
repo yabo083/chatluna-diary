@@ -244,8 +244,9 @@
 }
 
 .diary-page.variant-depth.variant-signature .diary-cell-marks {
+  right: 9px;
   bottom: 4px;
-  left: 9px;
+  left: auto;
 }
 
 /* index */
