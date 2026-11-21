@@ -5,12 +5,15 @@ A per-preset diary for ChatLuna v2 WebUI: read the day's real conversation diges
 ## What it does
 
 - **One book per preset** under `data/chatluna/diary/<presetId>/`.
-- **One model-facing tool, `diary`**, with `action: "context" | "read" | "write" | "mark" | "attach"`: bounded day digest, existing entries (up to 7 days / ~12k chars), append/replace writing, 1–5 marks, and workspace image copy. The tool does not expose whole-book export, formatting or deletion.
+- **Three model-facing tools**, split by intent:
+  - `diary_read` — `action: "list" | "read" | "context"`: a lightweight index (dates, mark levels, entry titles, first lines — no bodies), existing entries (up to 7 days / ~12k chars), and a bounded day digest.
+  - `diary_write` — `action: "write" | "mark" | "attach"`: append/replace writing, 1–5 marks, and workspace image copy.
+  - `diary_manage` — `action: "export" | "format" | "delete"`: whole-book export, formatting, and deletion, always offered to the AI.
 - **Marks are one mark, stacked**: a single hand-drawn vermilion brush circle is repeated 1–5 times for levels 1–5. The mask is shipped inline; no external image request.
 - **Scheduled writing**: one job per preset at local 22:00 (`0 22 * * *`), with the preset locked to its own book.
 - **WebUI**: a V2 book page, calendar with marks, index, reading pane, media blob loading, and a hidden `/diary/preview` layout showcase.
 - **Management**: each book card has a corner menu (export all, format, delete all); the book header has a batch button for marquee-selecting days and exporting/deleting them. Day configuration lives in each entry's `...` icon menu (edit/delete entry, mark level, delete day); new entries use the bottom composer. There is no all-in-one management modal, separate paper toolbar, or manual AI-write button.
-- **Tool loading**: all diary tools are marked resident (`deferred: false`), so a scheduled run can call them even when tool search is on.
+- **Tool loading**: all three diary tools are marked resident (`deferred: false`), so a scheduled run can call the ones it is allowed to see even when tool search is on.
 
 ## Install
 
@@ -52,16 +55,30 @@ The script installs, tests, builds, initializes git if needed, and pushes to Git
 data/chatluna/diary/<presetId>/
   YYYY-MM-DD.md      one day, possibly several "## title" entries
   marks.json         { "version": 1, "marks": { "YYYY-MM-DD": { level, note?, updatedAt } } }
-  media/             images copied by diary attach
+  media/             images copied by the diary_write attach action
 ```
 
 `presetId` is sanitized to `[A-Za-z0-9][A-Za-z0-9._-]*`; anything else falls back to `default`. A normal chat cannot write another preset's book; only the scheduled runner may pass `presetId` for its own job. If a conversation switched presets in place, only entries after the most recent `chatluna:preset` switch are eligible for the current preset; earlier segments are discarded rather than mixed into the diary.
 
 ## Tools
 
-| Tool | Purpose |
-| --- | --- |
-| `diary` | `action: context` bounded day digest; `read` existing entries (up to 7 days / ~12k chars); `write` append/replace a day; `mark` level 1–5 plus an 80-char note; `attach` copy a workspace image and return a `diary-media:` Markdown tag |
+| Tool | Actions | Purpose |
+| --- | --- | --- |
+| `diary_read` | `list` | Lightweight index: dates, mark levels, entry titles and first lines — no bodies |
+| | `read` | Existing entries for the current preset (up to 7 days / ~12k chars) |
+| | `context` | Bounded digest of the day's real conversation, tool noise excluded |
+| `diary_write` | `write` | Append or replace one day's Markdown |
+| | `mark` | Set mark level 1–5 plus an optional 80-char note |
+| | `attach` | Copy a workspace image and return a `diary-media:` Markdown tag |
+| `diary_manage` | `export` | Export the whole book |
+| | `format` | Normalize/format the book |
+| | `delete` | Delete the named days |
+
+`diary_read` action `list` is the discovery entry: call it before `read`, `export` or `delete` when you do not know which days exist.
+
+`diary_manage` always exposes `export`, `format` and `delete` to the model; there is no plugin config gate or action allow-list. Deletion still happens only when the user explicitly asks for it. The WebUI management menus described above are the user's own equivalent path.
+
+Scheduled diary runs see only `diary_read` and `diary_write` (`list` included); `diary_manage` is not registered for them.
 
 The model-facing contract is also injected into each agent's system prompt. Keep it in sync with `index.ts` when tools change.
 
@@ -134,12 +151,13 @@ The first publish must exist before trusted publishing can be attached; publish 
 
 ## Security notes
 
-- Diary tools are limited to the owner's **direct chat** (or a diary-scheduled run created by this plugin). Group members sharing the preset get `FORBIDDEN`; the WebUI token remains the page-level authority.
-- The scheduled diary run gets a per-agent tool filter: only the single `diary` tool is visible. Group text is still untrusted input, but it cannot reach shell/filesystem tools through this agent.
+- Diary tools are limited to the owner's **direct chat**, an authenticated **WebUI conversation**, or a diary-scheduled run created by this plugin. Group members sharing the preset get `FORBIDDEN`; the WebUI token remains the page-level authority.
+- The scheduled diary run gets a per-agent tool filter: only `diary_read` and `diary_write` are visible. Management is not available to scheduled runs — `diary_manage` is not registered for them. Group text is still untrusted input, but it cannot reach shell/filesystem tools through this agent.
+- In a normal direct chat, `diary_manage` exposes `export`, `format` and `delete` with no config gate; deletion is expected only on an explicit user request. The WebUI management menus remain the user's own authority.
 - Diary files are private (new files `0600`, directories `0700`). The plugin writes under the ChatLuna data directory; restrict the deployment account and backups accordingly.
 - External images in diary Markdown are replaced with a blocked placeholder, so opening a page cannot probe external or localhost URLs. Links open with `noopener noreferrer`.
 - The digest redacts links, keys, tokens and local addresses, but it is still model input from untrusted conversations. Treat it as data, never as instructions. Scheduled prompts say the same.
-- `diary` action `attach` only accepts real files inside the agent workspace, rejects hardlinked files, images ≤8 MB, and the documented extensions.
+- `diary_write` action `attach` only accepts real files inside the agent workspace, rejects hardlinked files, images ≤8 MB, and the documented extensions.
 - Media is served through an authenticated WebUI action, not a public static path; files larger than 8 MB are not served.
 
 ## License
