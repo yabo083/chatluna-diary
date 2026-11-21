@@ -770,12 +770,6 @@ export function DiaryBookPage() {
               ) : composeOpen ? null : (
                 <div className="diary-empty-state">
                   <p className="diary-empty">这一天还是空白。也许可以留一句话给它。</p>
-                  <div className="diary-inline-actions">
-                    <button type="button" className="diary-action" onClick={() => setComposeOpen(true)}>
-                      <Plus />
-                      手动写一笔
-                    </button>
-                  </div>
                 </div>
               )}
 
