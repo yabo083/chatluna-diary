@@ -130,6 +130,7 @@ button.diary-meta-badge.is-interactive:active {
 }
 
 .diary-calendar {
+  position: relative;
   padding: 12px 16px 14px;
   border: 1px solid var(--border);
   border-radius: calc(var(--radius) + 2px);
@@ -280,13 +281,13 @@ button.diary-meta-badge.is-interactive:active {
   position: relative;
 }
 
-.diary-grid.is-batch,
-.diary-cell.is-batch {
+.diary-calendar.is-batch,
+.diary-calendar.is-batch .diary-cell {
   user-select: none;
   touch-action: none;
 }
 
-.diary-grid.is-batch .diary-cell {
+.diary-calendar.is-batch .diary-cell {
   cursor: crosshair;
 }
 
@@ -409,8 +410,8 @@ button.diary-meta-badge.is-interactive:active {
 
 .diary-cell-marks {
   position: absolute;
+  right: 8px;
   bottom: 4px;
-  left: 8px;
   display: flex;
   align-items: center;
   gap: 4px;
@@ -1351,6 +1352,44 @@ button.diary-meta-badge.is-interactive:active {
   width: 14px;
   height: 14px;
   flex: none;
+}
+
+.diary-menu-label {
+  margin: 5px 8px 4px;
+  color: var(--muted-foreground);
+  font-size: 10px;
+  letter-spacing: 0.04em;
+}
+
+.diary-menu-levels {
+  display: flex;
+  gap: 4px;
+  padding: 0 6px 6px;
+}
+
+.diary-menu-levels button {
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: 50%;
+  background: var(--card);
+  color: var(--muted-foreground);
+  font: inherit;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  cursor: pointer;
+}
+
+.diary-menu-levels button:hover {
+  background: var(--secondary);
+  color: var(--foreground);
+}
+
+.diary-menu-levels button.is-active {
+  border-color: var(--foreground);
+  background: var(--foreground);
+  color: var(--background);
 }
 
 .diary-menu-sep {

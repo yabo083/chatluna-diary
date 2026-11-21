@@ -80,7 +80,15 @@ export function Menu(props: {
   )
 }
 
-export function EntryMenu(props: { title: string; onEdit(): void; onDelete(): void }) {
+export function EntryMenu(props: {
+  title: string
+  markLevel?: number
+  onEdit(): void
+  onDelete(): void
+  onMark(level: number): void
+  onRemoveMark(): void
+  onDeleteDay(): void
+}) {
   return (
     <Menu label={`${props.title} 的更多操作`} icon={MoreHorizontal}>
       {(close) => (
@@ -100,6 +108,44 @@ export function EntryMenu(props: { title: string; onEdit(): void; onDelete(): vo
             onClick={() => {
               close()
               props.onDelete()
+            }}
+          />
+          <div className="diary-menu-sep" />
+          <p className="diary-menu-label">贴花等级</p>
+          <div className="diary-menu-levels" role="group" aria-label="贴花等级">
+            {[1, 2, 3, 4, 5].map((level) => (
+              <button
+                key={level}
+                type="button"
+                className={props.markLevel === level ? 'is-active' : undefined}
+                aria-pressed={props.markLevel === level}
+                onClick={() => {
+                  close()
+                  props.onMark(level)
+                }}
+              >
+                {level}
+              </button>
+            ))}
+          </div>
+          {props.markLevel === undefined ? null : (
+            <MenuItem
+              icon={Stamp}
+              label="移除贴花"
+              onClick={() => {
+                close()
+                props.onRemoveMark()
+              }}
+            />
+          )}
+          <div className="diary-menu-sep" />
+          <MenuItem
+            icon={Trash2}
+            label="删除当天"
+            danger
+            onClick={() => {
+              close()
+              props.onDeleteDay()
             }}
           />
         </>
