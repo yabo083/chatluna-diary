@@ -1,11 +1,11 @@
 import * as React from 'react'
 import MarkdownIt from 'markdown-it-ts'
 import { apiErrorMessage, callAction, toast, useLive } from '@chatluna/ui-client/client'
-import { Calendar, ChevronLeft, ChevronRight, Plus, Sparkles } from 'lucide-react'
+import { Calendar, Check, ChevronLeft, ChevronRight, Download, ListChecks, Plus, Stamp, Trash2, X } from 'lucide-react'
 import { useNavigate, useParams } from 'react-router'
 import type { DiaryDateRow, DiaryEntryRow, DiaryMark } from './types'
 import { calendarBadge } from './calendar-meta'
-import { DayMenu, EntryMenu, InlineConfirm, InlineEntryForm, MarkEditor } from './controls'
+import { EntryMenu, InlineConfirm, InlineEntryForm, MarkEditor } from './controls'
 import { MarkStamp, type MarkLevel } from './stickers'
 import './diary.css'
 import './styles/variant-signature.css'
@@ -123,7 +123,6 @@ export function DiaryBookPage() {
   const [selected, setSelected] = React.useState(today)
   const entry = useLive('diary.entry', { presetId, date: selected })
   const book = books.data?.books.find((row) => row.presetId === presetId)
-  const [running, setRunning] = React.useState(false)
   const [composeOpen, setComposeOpen] = React.useState(false)
   const [editing, setEditing] = React.useState<DiaryEntryRow>()
   const [dayEditing, setDayEditing] = React.useState(false)
@@ -131,6 +130,12 @@ export function DiaryBookPage() {
   const [markOpen, setMarkOpen] = React.useState(false)
   const [busy, setBusy] = React.useState<string>()
   const [confirm, setConfirm] = React.useState<{ kind: 'entry'; row: DiaryEntryRow } | { kind: 'day' }>()
+  const [batch, setBatch] = React.useState(false)
+  const [selectedDates, setSelectedDates] = React.useState<Set<string>>(new Set())
+  const [batchConfirm, setBatchConfirm] = React.useState(false)
+  const [batchBusy, setBatchBusy] = React.useState<string>()
+  const gridRef = React.useRef<HTMLDivElement>(null)
+  const [marquee, setMarquee] = React.useState<{ left: number; top: number; width: number; height: number }>()
 
   React.useEffect(() => {
     setComposeOpen(false)
@@ -188,6 +193,9 @@ export function DiaryBookPage() {
     ...Array.from({ length: total }, (_, index) => index + 1)
   ]
   while (cells.length % 7 !== 0) cells.push(undefined)
+  const monthDates = cells
+    .filter((day): day is number => day !== undefined)
+    .map((day) => `${month}-${String(day).padStart(2, '0')}`)
 
   const entries = entry.data?.entries ?? []
   const entryRef = React.useRef<HTMLElement>(null)
@@ -359,24 +367,116 @@ export function DiaryBookPage() {
     requestAnimationFrame(() => composerRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' }))
   }, [composeOpen])
 
-  const runDiary = async () => {
-    if (selected !== today) return toast.info('只能生成今天的日记')
-    setRunning(true)
-    try {
-      const result = await callAction('diary.run', { presetId })
-      if (result.status === 'completed') {
-        toast.success('日记已写入')
-      } else if (result.status === 'failed' || result.status === 'cancelled') {
-        toast.error('日记写入失败', { description: result.error ?? result.status })
-      } else if (result.status === 'skipped') {
-        toast.info('这次没有运行', { description: '上一次任务可能还在执行。' })
-      } else {
-        toast.info('日记任务已触发', { description: result.background === undefined ? result.status : `后台任务 ${result.background}` })
+  React.useEffect(() => {
+    setBatch(false)
+    setSelectedDates(new Set())
+    setBatchConfirm(false)
+    setBatchBusy(undefined)
+  }, [presetId])
+
+  const toggleBatch = () => {
+    setBatch((value) => !value)
+    setSelectedDates(new Set())
+    setBatchConfirm(false)
+  }
+
+  const toggleDate = (date: string) => {
+    setSelectedDates((current) => {
+      const next = new Set(current)
+      if (next.has(date)) next.delete(date)
+      else next.add(date)
+      return next
+    })
+  }
+
+  const startDrag = (event: React.PointerEvent, date?: string) => {
+    if (!batch || event.button !== 0) return
+    const grid = gridRef.current
+    if (grid === null) return
+    event.preventDefault()
+    const box = grid.getBoundingClientRect()
+    const startX = event.clientX - box.left
+    const startY = event.clientY - box.top
+    const drag = {
+      startX,
+      startY,
+      base: new Set(selectedDates),
+      mode: event.altKey ? ('remove' as const) : ('add' as const),
+      moved: false,
+      startDate: date
+    }
+    setMarquee({ left: startX, top: startY, width: 0, height: 0 })
+
+    const move = (moveEvent: PointerEvent) => {
+      const x = moveEvent.clientX - box.left
+      const y = moveEvent.clientY - box.top
+      if (!drag.moved && Math.abs(x - startX) + Math.abs(y - startY) > 4) drag.moved = true
+      if (!drag.moved) return
+      const left = Math.min(startX, x)
+      const top = Math.min(startY, y)
+      const right = Math.max(startX, x)
+      const bottom = Math.max(startY, y)
+      setMarquee({ left, top, width: right - left, height: bottom - top })
+      const next = new Set(drag.base)
+      for (const cell of grid.querySelectorAll<HTMLButtonElement>('button[data-date]')) {
+        const rect = cell.getBoundingClientRect()
+        const cellLeft = rect.left - box.left
+        const cellTop = rect.top - box.top
+        const intersects = cellLeft < right && cellLeft + rect.width > left && cellTop < bottom && cellTop + rect.height > top
+        if (!intersects) continue
+        const value = cell.dataset.date
+        if (value === undefined) continue
+        if (drag.mode === 'add') next.add(value)
+        else next.delete(value)
       }
+      setSelectedDates(next)
+    }
+
+    const up = () => {
+      window.removeEventListener('pointermove', move)
+      setMarquee(undefined)
+      if (!drag.moved && drag.startDate !== undefined) toggleDate(drag.startDate)
+    }
+    window.addEventListener('pointermove', move)
+    window.addEventListener('pointerup', up, { once: true })
+  }
+
+  const selectMonth = () => setSelectedDates(new Set(monthDates))
+
+  const exportSelected = async () => {
+    const chosen = [...selectedDates].sort()
+    if (chosen.length === 0) return
+    setBatchBusy('export')
+    try {
+      const result = await callAction('diary.days.export', { presetId, dates: chosen })
+      const url = URL.createObjectURL(new Blob([result.content], { type: 'text/markdown;charset=utf-8' }))
+      const link = document.createElement('a')
+      link.href = url
+      link.download = result.filename
+      link.click()
+      URL.revokeObjectURL(url)
+      toast.success(`已导出 ${chosen.length} 天`)
     } catch (error) {
-      toast.error('触发失败', { description: apiErrorMessage(error) })
+      toast.error('导出失败', { description: apiErrorMessage(error) })
     } finally {
-      setRunning(false)
+      setBatchBusy(undefined)
+    }
+  }
+
+  const removeSelected = async () => {
+    const chosen = [...selectedDates].sort()
+    if (chosen.length === 0) return
+    setBatchBusy('delete')
+    try {
+      const result = await callAction('diary.days.remove', { presetId, dates: chosen })
+      toast.success(`已删除 ${result.removed.length} 天`)
+      setBatchConfirm(false)
+      setSelectedDates(new Set())
+      setBatch(false)
+    } catch (error) {
+      toast.error('删除失败', { description: apiErrorMessage(error) })
+    } finally {
+      setBatchBusy(undefined)
     }
   }
 
@@ -392,17 +492,72 @@ export function DiaryBookPage() {
           <h1>{book?.name ?? presetId}</h1>
           <p className="diary-subtitle">把今天轻轻收进这一页。</p>
         </div>
-        <button
-          type="button"
-          className="diary-meta-badge is-interactive"
-          onClick={goToday}
-          title="回到今天"
-          aria-label={`回到今天（${todayLabel}）`}
-        >
-          <Calendar className="diary-meta-icon" aria-hidden="true" />
-          <time dateTime={today}>{todayLabel}</time>
-        </button>
+        <div className="diary-header-side">
+          <button
+            type="button"
+            className="diary-meta-badge is-interactive"
+            onClick={toggleBatch}
+            aria-pressed={batch}
+            title="批量选择日期"
+          >
+            <ListChecks className="diary-meta-icon" aria-hidden="true" />
+            <span>批量</span>
+          </button>
+          <button
+            type="button"
+            className="diary-meta-badge is-interactive"
+            onClick={goToday}
+            title="回到今天"
+            aria-label={`回到今天（${todayLabel}）`}
+          >
+            <Calendar className="diary-meta-icon" aria-hidden="true" />
+            <time dateTime={today}>{todayLabel}</time>
+          </button>
+        </div>
       </header>
+
+      {batch ? (
+        <div className="diary-batch-bar">
+          <span className="diary-batch-status">
+            <ListChecks /> 已选 {selectedDates.size} 天
+          </span>
+          <div className="diary-inline-actions">
+            <button type="button" className="diary-action" onClick={selectMonth} disabled={batchBusy !== undefined}>
+              <Check />
+              全选本月
+            </button>
+            <button type="button" className="diary-action" onClick={() => setSelectedDates(new Set())} disabled={batchBusy !== undefined || selectedDates.size === 0}>
+              清空
+            </button>
+            <button type="button" className="diary-action" disabled={selectedDates.size === 0 || batchBusy !== undefined} onClick={() => void exportSelected()}>
+              <Download />
+              {batchBusy === 'export' ? '导出中…' : '导出选中'}
+            </button>
+            <button
+              type="button"
+              className="diary-action is-ghost is-danger"
+              disabled={selectedDates.size === 0 || batchBusy !== undefined}
+              onClick={() => setBatchConfirm(true)}
+            >
+              <Trash2 />
+              删除选中
+            </button>
+            <button type="button" className="diary-action is-ghost" onClick={toggleBatch} disabled={batchBusy !== undefined}>
+              <X />
+              退出
+            </button>
+          </div>
+          {batchConfirm ? (
+            <InlineConfirm
+              message={`确定删除选中的 ${selectedDates.size} 天日记和贴花？不可撤销。`}
+              busy={batchBusy === 'delete'}
+              confirmLabel="删除选中"
+              onConfirm={() => void removeSelected()}
+              onCancel={() => setBatchConfirm(false)}
+            />
+          ) : null}
+        </div>
+      ) : null}
 
       <section className="diary-calendar" aria-label={`${year} 年 ${monthValue} 月月视图`}>
         <div className="diary-calendar-head">
@@ -429,7 +584,14 @@ export function DiaryBookPage() {
           ))}
         </div>
 
-        <div className="diary-grid">
+        <div className={batch ? 'diary-grid is-batch' : 'diary-grid'} ref={gridRef}>
+          {marquee === undefined ? null : (
+            <span
+              className="diary-marquee"
+              style={{ left: marquee.left, top: marquee.top, width: marquee.width, height: marquee.height }}
+              aria-hidden="true"
+            />
+          )}
           {cells.map((day, index) => {
             if (day === undefined) return <span key={`blank-${index}`} className="diary-cell is-blank" />
             const date = `${month}-${String(day).padStart(2, '0')}`
@@ -437,12 +599,14 @@ export function DiaryBookPage() {
             const badge = calendarBadge(date)
             const mark = marksByDate.get(date)
             const weekday = (offset + day - 1) % 7
+            const batchSelected = batch && selectedDates.has(date)
             const label = [
               `${monthValue} 月 ${day} 日`,
               WEEKDAY_NAMES[weekday],
               badge?.text ?? '',
               row === undefined ? '' : '有记录',
-              mark === undefined ? '' : `标记：${markLabel(mark.level, mark.note)}`
+              mark === undefined ? '' : `标记：${markLabel(mark.level, mark.note)}`,
+              batchSelected ? '已选中' : ''
             ]
               .filter(Boolean)
               .join(' · ')
@@ -450,22 +614,29 @@ export function DiaryBookPage() {
               <button
                 key={date}
                 type="button"
+                data-date={date}
                 className={[
                   'diary-cell',
                   date === selected ? 'is-selected' : '',
                   date === today ? 'is-today' : '',
+                  batch ? 'is-batch' : '',
+                  batchSelected ? 'is-batch-selected' : '',
                   weekday === 5 ? 'is-saturday' : '',
                   weekday === 6 ? 'is-sunday' : ''
                 ]
                   .filter(Boolean)
                   .join(' ')}
-                onClick={() => setSelected(date)}
+                onClick={() => {
+                  if (!batch) setSelected(date)
+                }}
+                onPointerDown={(event) => startDrag(event, date)}
                 aria-label={label}
-                aria-pressed={date === selected}
-                aria-current={date === today ? 'date' : undefined}
+                aria-pressed={batch ? batchSelected : date === selected}
+                aria-current={batch ? undefined : date === today ? 'date' : undefined}
               >
                 <span className="diary-cell-top">
                   <span className="diary-cell-day">{day}</span>
+                  {batchSelected ? <Check className="diary-batch-check" aria-hidden="true" /> : null}
                 </span>
                 {badge === undefined ? null : (
                   <span className={`diary-badge is-${badge.tone}`} aria-hidden="true">
@@ -537,69 +708,7 @@ export function DiaryBookPage() {
               </div>
               <span className="diary-reading-rule" aria-hidden="true" />
             </div>
-            <div className="diary-reading-tools">
-              {selectedMark === undefined ? null : (
-                <div className="diary-mark-note">
-                  <DiaryMark level={selectedMark.level} note={selectedMark.note} />
-                  <span>{markLabel(selectedMark.level, selectedMark.note)}</span>
-                </div>
-              )}
-              <DayMenu
-                isToday={selected === today}
-                running={running}
-                onCompose={() => {
-                  setEditing(undefined)
-                  setDayEditing(false)
-                  setMarkOpen(false)
-                  setConfirm(undefined)
-                  setComposeOpen(true)
-                }}
-                onEditDay={() => {
-                  setDayDraft(entry.data?.markdown.trim() ? entry.data.markdown : `# ${selected}\n`)
-                  setComposeOpen(false)
-                  setEditing(undefined)
-                  setMarkOpen(false)
-                  setConfirm(undefined)
-                  setDayEditing(true)
-                }}
-                onMark={() => {
-                  setComposeOpen(false)
-                  setEditing(undefined)
-                  setDayEditing(false)
-                  setConfirm(undefined)
-                  setMarkOpen(true)
-                }}
-                onRun={() => void runDiary()}
-                onDelete={() => {
-                  setComposeOpen(false)
-                  setEditing(undefined)
-                  setDayEditing(false)
-                  setMarkOpen(false)
-                  setConfirm({ kind: 'day' })
-                }}
-              />
-            </div>
           </header>
-
-          {confirm?.kind === 'day' ? (
-            <InlineConfirm
-              message={`确定删除 ${selected} 的整篇日记吗？包含全部条目与贴花，不可撤销。`}
-              busy={busy === 'delete-day'}
-              confirmLabel="彻底删除"
-              onConfirm={() => void removeDay()}
-              onCancel={() => setConfirm(undefined)}
-            />
-          ) : null}
-
-          {markOpen ? (
-            <MarkEditor
-              mark={entry.data?.mark ?? null}
-              busy={busy === 'mark'}
-              onSave={(level, note) => void saveMark(level, note)}
-              onRemove={() => void removeMark()}
-              onCancel={() => setMarkOpen(false)}
-            />
-          ) : null}
 
           {dayEditing ? (
             <section className="diary-paper diary-day-editor">
@@ -626,6 +735,26 @@ export function DiaryBookPage() {
             </section>
           ) : (
             <article className="diary-paper" ref={entryRef} aria-busy={entry.status === 'loading'}>
+              {confirm?.kind === 'day' ? (
+                <InlineConfirm
+                  message={`确定删除 ${selected} 的整篇日记吗？包含全部条目与贴花，不可撤销。`}
+                  busy={busy === 'delete-day'}
+                  confirmLabel="彻底删除"
+                  onConfirm={() => void removeDay()}
+                  onCancel={() => setConfirm(undefined)}
+                />
+              ) : null}
+
+              {markOpen ? (
+                <MarkEditor
+                  mark={entry.data?.mark ?? null}
+                  busy={busy === 'mark'}
+                  onSave={(level, note) => void saveMark(level, note)}
+                  onRemove={() => void removeMark()}
+                  onCancel={() => setMarkOpen(false)}
+                />
+              ) : null}
+
               {entry.status === 'loading' ? (
                 <p className="diary-hint">正在翻到 {selected}……</p>
               ) : entries.length > 0 ? (
@@ -696,15 +825,38 @@ export function DiaryBookPage() {
                       <Plus />
                       手动写一笔
                     </button>
-                    {selected === today ? (
-                      <button type="button" className="diary-action is-primary" onClick={() => void runDiary()} disabled={running}>
-                        <Sparkles />
-                        {running ? '正在写…' : '让 AI 写今天'}
-                      </button>
-                    ) : null}
                   </div>
                 </div>
               )}
+
+              <div className="diary-paper-tools">
+                <div className="diary-paper-mark">
+                  {selectedMark === undefined ? <Stamp className="diary-icon" aria-hidden="true" /> : <DiaryMark level={selectedMark.level} note={selectedMark.note} />}
+                  <span>{selectedMark === undefined ? '未贴花' : markLabel(selectedMark.level, selectedMark.note)}</span>
+                  <button type="button" className="diary-action" onClick={() => setMarkOpen((value) => !value)}>
+                    改等级
+                  </button>
+                </div>
+                <div className="diary-inline-actions">
+                  <button
+                    type="button"
+                    className="diary-action is-ghost"
+                    onClick={() => {
+                      setDayDraft(entry.data?.markdown.trim() ? entry.data.markdown : `# ${selected}\n`)
+                      setMarkOpen(false)
+                      setComposeOpen(false)
+                      setEditing(undefined)
+                      setDayEditing(true)
+                    }}
+                  >
+                    编辑当天
+                  </button>
+                  <button type="button" className="diary-action is-ghost is-danger" onClick={() => setConfirm({ kind: 'day' })}>
+                    <Trash2 />
+                    删除当天
+                  </button>
+                </div>
+              </div>
 
               <div className="diary-composer" ref={composerRef}>
                 {composeOpen ? (

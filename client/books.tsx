@@ -1,107 +1,136 @@
 import * as React from 'react'
-import { BookOpen, Loader2, SlidersHorizontal, Sparkles } from 'lucide-react'
+import { BookOpen, Download, Loader2, Settings2, Trash2, Wand2 } from 'lucide-react'
 import { useNavigate } from 'react-router'
 import { apiErrorMessage, callAction, toast, useLive } from '@chatluna/ui-client/client'
+import { Menu, MenuItem } from './controls'
 import type { DiaryBook } from './types'
 import './diary.css'
 
-function BookCard(props: { book: DiaryBook; onOpen(): void }) {
-  const { book } = props
-  return (
-    <button type="button" className="diary-book" onClick={props.onOpen}>
-      <span className="diary-book-body">
-        <span className="diary-book-head">
-          <BookOpen className="diary-book-icon" aria-hidden="true" />
-          <span className="diary-book-name">{book.name}</span>
-        </span>
-        {book.description === undefined ? null : <span className="diary-book-desc">{book.description}</span>}
-        <span className="diary-book-meta">
-          <span className="diary-book-stats">
-            {book.days} 天 · {book.marks} 个标记
-          </span>
-          <span className="diary-book-latest">{book.latest === null ? '还没有记录' : `最近 ${book.latest}`}</span>
-        </span>
-      </span>
-    </button>
-  )
+function downloadText(filename: string, content: string) {
+  const url = URL.createObjectURL(new Blob([content], { type: 'text/markdown;charset=utf-8' }))
+  const link = document.createElement('a')
+  link.href = url
+  link.download = filename
+  link.click()
+  URL.revokeObjectURL(url)
 }
 
-/** Small global entry: per-book "write today" without opening a book. */
-function GlobalManage(props: { books: DiaryBook[] }) {
-  const [open, setOpen] = React.useState(false)
-  const [running, setRunning] = React.useState<string>()
-  const ref = React.useRef<HTMLDivElement>(null)
+function BookCard(props: { book: DiaryBook; onOpen(): void }) {
+  const { book } = props
+  const dates = useLive('diary.dates', { presetId: book.presetId })
+  const days = (dates.data?.dates ?? []).map((row) => row.date)
+  const [busy, setBusy] = React.useState<'export' | 'format' | 'delete'>()
+  const [confirm, setConfirm] = React.useState(false)
 
-  React.useEffect(() => {
-    if (!open) return
-    const close = (event: MouseEvent) => {
-      if (ref.current !== null && !ref.current.contains(event.target as Node)) setOpen(false)
-    }
-    const key = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') setOpen(false)
-    }
-    document.addEventListener('mousedown', close)
-    document.addEventListener('keydown', key)
-    return () => {
-      document.removeEventListener('mousedown', close)
-      document.removeEventListener('keydown', key)
-    }
-  }, [open])
-
-  const run = async (book: DiaryBook) => {
-    setRunning(book.presetId)
+  const exportAll = async () => {
+    if (days.length === 0) return
+    setBusy('export')
     try {
-      const result = await callAction('diary.run', { presetId: book.presetId })
-      if (result.status === 'completed') toast.success(`《${book.name}》今天的日记已写入`)
-      else if (result.status === 'failed' || result.status === 'cancelled') {
-        toast.error(`《${book.name}》写入失败`, { description: result.error ?? result.status })
-      } else {
-        toast.info(`《${book.name}》任务已触发`, { description: result.status })
-      }
+      const result = await callAction('diary.days.export', { presetId: book.presetId, dates: days })
+      downloadText(result.filename, result.content)
+      toast.success(`已导出 ${book.name}`)
     } catch (error) {
-      toast.error(`《${book.name}》触发失败`, { description: apiErrorMessage(error) })
+      toast.error('导出失败', { description: apiErrorMessage(error) })
     } finally {
-      setRunning(undefined)
+      setBusy(undefined)
+    }
+  }
+
+  const formatAll = async () => {
+    setBusy('format')
+    try {
+      const result = await callAction('diary.book.format', { presetId: book.presetId })
+      toast.success('格式整理完成', { description: `${result.changed} 天有改动` })
+    } catch (error) {
+      toast.error('格式化失败', { description: apiErrorMessage(error) })
+    } finally {
+      setBusy(undefined)
+    }
+  }
+
+  const removeAll = async () => {
+    if (days.length === 0) return
+    setBusy('delete')
+    try {
+      const result = await callAction('diary.days.remove', { presetId: book.presetId, dates: days })
+      toast.success(`已删除 ${result.removed.length} 天`)
+      setConfirm(false)
+    } catch (error) {
+      toast.error('删除失败', { description: apiErrorMessage(error) })
+    } finally {
+      setBusy(undefined)
     }
   }
 
   return (
-    <div className="diary-global-manage" ref={ref}>
-      <button
-        type="button"
-        className="diary-icon-button"
-        aria-label="日记管理"
-        aria-haspopup="menu"
-        aria-expanded={open}
-        title="日记管理"
-        onClick={() => setOpen((value) => !value)}
-      >
-        <SlidersHorizontal />
+    <div className="diary-book">
+      <button type="button" className="diary-book-main" onClick={props.onOpen}>
+        <span className="diary-book-body">
+          <span className="diary-book-head">
+            <BookOpen className="diary-book-icon" aria-hidden="true" />
+            <span className="diary-book-name">{book.name}</span>
+          </span>
+          {book.description === undefined ? null : <span className="diary-book-desc">{book.description}</span>}
+          <span className="diary-book-meta">
+            <span className="diary-book-stats">
+              {book.days} 天 · {book.marks} 个标记
+            </span>
+            <span className="diary-book-latest">{book.latest === null ? '还没有记录' : `最近 ${book.latest}`}</span>
+          </span>
+        </span>
       </button>
-      {open ? (
-        <div className="diary-global-pop" role="menu">
-          <p className="diary-global-title">日记管理</p>
-          <p className="diary-global-hint">自动写入由插件设置控制；这里可以单独让某本日记写今天。</p>
-          {props.books.filter((book) => book.presetId !== 'default').length === 0 ? (
-            <p className="diary-hint">还没有可以自动写入的预设日记簿。</p>
-          ) : (
-            <ul className="diary-global-list">
-              {props.books.filter((book) => book.presetId !== 'default').map((book) => (
-                <li key={book.presetId}>
-                  <span className="diary-global-name">{book.name}</span>
-                  <button
-                    type="button"
-                    className="diary-action"
-                    disabled={running !== undefined}
-                    onClick={() => void run(book)}
-                  >
-                    {running === book.presetId ? <Loader2 className="diary-spin" /> : <Sparkles />}
-                    {running === book.presetId ? '写作中…' : '写今天'}
-                  </button>
-                </li>
-              ))}
-            </ul>
+
+      <div className="diary-book-manage">
+        <Menu label={`管理 ${book.name}`} icon={Settings2} buttonClass="diary-icon-button is-card">
+          {(close) => (
+            <>
+              <MenuItem
+                icon={busy === 'export' ? Loader2 : Download}
+                label={busy === 'export' ? '导出中…' : '导出全部'}
+                disabled={busy !== undefined || days.length === 0}
+                onClick={() => {
+                  close()
+                  void exportAll()
+                }}
+              />
+              <MenuItem
+                icon={busy === 'format' ? Loader2 : Wand2}
+                label={busy === 'format' ? '整理中…' : '格式化'}
+                disabled={busy !== undefined}
+                onClick={() => {
+                  close()
+                  void formatAll()
+                }}
+              />
+              <div className="diary-menu-sep" />
+              <MenuItem
+                icon={Trash2}
+                label="删除全部"
+                danger
+                disabled={busy !== undefined || days.length === 0}
+                onClick={() => {
+                  close()
+                  setConfirm(true)
+                }}
+              />
+            </>
           )}
+        </Menu>
+      </div>
+
+      {confirm ? (
+        <div className="diary-book-confirm" role="alertdialog">
+          <p>
+            删除《{book.name}》全部 {days.length} 天日记和贴花？不可撤销。
+          </p>
+          <div className="diary-inline-actions">
+            <button type="button" className="diary-action is-ghost" onClick={() => setConfirm(false)} disabled={busy !== undefined}>
+              取消
+            </button>
+            <button type="button" className="diary-action is-danger-solid" onClick={() => void removeAll()} disabled={busy !== undefined}>
+              {busy === 'delete' ? '删除中…' : '删除全部'}
+            </button>
+          </div>
         </div>
       ) : null}
     </div>
@@ -121,12 +150,9 @@ export function DiaryBooksPage() {
           <h1>日记簿</h1>
           <p className="diary-subtitle">每个预设，一本自己的日记。</p>
         </div>
-        <div className="diary-header-side">
-          <div className="diary-meta-badge" aria-label={`共 ${rows.length} 本日记`}>
-            <BookOpen className="diary-meta-icon" aria-hidden="true" />
-            <span>共 {rows.length} 本</span>
-          </div>
-          <GlobalManage books={rows} />
+        <div className="diary-meta-badge" aria-label={`共 ${rows.length} 本日记`}>
+          <BookOpen className="diary-meta-icon" aria-hidden="true" />
+          <span>共 {rows.length} 本</span>
         </div>
       </header>
 

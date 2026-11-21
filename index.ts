@@ -25,6 +25,8 @@ const MEDIA_MIME = {
   '.avif': 'image/avif'
 }
 const MAX_DAYS = 7
+/** One export or batch delete may name at most this many days. */
+const MAX_BATCH_DAYS = 366
 const MAX_TITLE = 40
 const JOB_PREFIX = 'chatluna-diary:'
 
@@ -663,6 +665,70 @@ function refreshDiary(ctx) {
   for (const key of ['diary.dates', 'diary.entry', 'diary.books', 'diary.marks']) ctx.chatluna_webui.refresh(key)
 }
 
+/** Validate a caller-supplied date list: non-empty, bounded, deduped, ascending. */
+function batchDates(value) {
+  if (!Array.isArray(value) || value.length === 0) {
+    throw new ApiError('INVALID_ARGUMENT', 'dates must hold at least one date')
+  }
+  if (value.length > MAX_BATCH_DAYS) {
+    throw new ApiError('INVALID_ARGUMENT', `dates may hold at most ${MAX_BATCH_DAYS} dates`)
+  }
+  return [...new Set(value.map((date) => parseDate(date)))].sort()
+}
+
+/** One download name that survives every filesystem and the browser's dialog. */
+function exportFilename(preset, dates) {
+  const stem = String(preset)
+    .replace(/[^A-Za-z0-9._-]+/g, '-')
+    .replace(/-{2,}/g, '-')
+    .replace(/^[-.]+|[-.]+$/g, '')
+    .slice(0, 48)
+  return `${stem === '' ? 'diary' : stem}-diary-${dates[0]}-${dates[dates.length - 1]}.md`.slice(0, 160)
+}
+
+/** One Markdown document for a batch of days; each file is copied verbatim. */
+async function exportDays(ctx, preset, dates) {
+  const marks = await readMarks(ctx, preset)
+  const sections = []
+  for (const date of dates) {
+    const day = (await readDay(ctx, preset, date)).replace(/\r\n?/g, '\n').trim()
+    const mark = marks[date]
+    const lines = [`## ${date}`]
+    if (mark !== undefined && Number.isFinite(Number(mark.level))) {
+      const label = mark.note === undefined || mark.note === '' ? `重要度 ${Number(mark.level)} / 5` : mark.note
+      lines.push('', `> 标记：${label}`)
+    }
+    lines.push('', day === '' ? '（无正文）' : day)
+    sections.push(lines.join('\n'))
+  }
+  const header = `# 日记导出 · ${preset}\n\n导出时间：${localTime(Date.now())}`
+  return { filename: exportFilename(preset, dates), content: `${header}\n\n${sections.join('\n\n---\n\n')}\n` }
+}
+
+/** Rewrite every day of one book into the canonical Markdown shape. */
+function formatBook(ctx, preset) {
+  return serialize(bookDirectory(ctx, preset), async () => {
+    const dates = (await listDates(ctx, preset)).map(({ date }) => date).sort()
+    let changed = 0
+    for (const date of dates) {
+      const raw = await readDay(ctx, preset, date)
+      let content = raw
+        .replace(/\r\n?/g, '\n')
+        .replace(/[ \t]+$/gm, '')
+        .replace(/\n{3,}/g, '\n\n')
+        .trim()
+      if (!new RegExp(`^# ${date}(?:\\s|$)`).test(content)) {
+        content = content === '' ? `# ${date}` : `# ${date}\n\n${content}`
+      }
+      const next = `${content}\n`
+      if (next === raw) continue
+      await writeAtomic(join(bookDirectory(ctx, preset), `${date}.md`), next)
+      changed += 1
+    }
+    return { dates, changed }
+  })
+}
+
 async function listDates(ctx, preset) {
   let files
   try {
@@ -1073,6 +1139,11 @@ export function apply(ctx, config = {}) {
     markdown: Schema.string().required(),
     revision: Schema.string()
   })
+  const DaysInput = Schema.object({
+    presetId: Schema.string().default('default'),
+    dates: Schema.array(Schema.string()).min(1).max(MAX_BATCH_DAYS).required()
+  })
+  const BookFormatInput = Schema.object({ presetId: Schema.string().default('default') })
   const MarkInput = Schema.object({
     presetId: Schema.string().default('default'),
     date: Schema.string().required(),
@@ -1116,6 +1187,31 @@ export function apply(ctx, config = {}) {
     queueMediaSweep(ctx, preset)
     refreshDiary(ctx)
     return removed
+  })
+
+  ctx.chatluna_webui.action('diary.days.export', { input: DaysInput }, async ({ presetId, dates }) => {
+    const preset = actionBook(ctx, presetId)
+    return exportDays(ctx, preset, batchDates(dates))
+  })
+
+  ctx.chatluna_webui.action('diary.days.remove', { input: DaysInput }, async ({ presetId, dates }) => {
+    const preset = actionBook(ctx, presetId)
+    const days = batchDates(dates)
+    const removed = []
+    for (const day of days) {
+      await removeDay(ctx, preset, day)
+      removed.push(day)
+    }
+    queueMediaSweep(ctx, preset)
+    refreshDiary(ctx)
+    return { removed }
+  })
+
+  ctx.chatluna_webui.action('diary.book.format', { input: BookFormatInput }, async ({ presetId }) => {
+    const preset = actionBook(ctx, presetId)
+    const result = await formatBook(ctx, preset)
+    if (result.changed > 0) refreshDiary(ctx)
+    return result
   })
 
   ctx.chatluna_webui.action('diary.mark.save', { input: MarkInput }, async ({ presetId, date, level, note }) => {

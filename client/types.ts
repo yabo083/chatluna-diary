@@ -56,6 +56,9 @@ declare module '@chatluna/ui-client/client' {
     }) => Promise<{ date: string; index: number }>
     'diary.day.remove': (input: { presetId?: string; date: string; revision?: string }) => Promise<{ date: string }>
     'diary.day.write': (input: { presetId?: string; date: string; markdown: string; revision?: string }) => Promise<{ date: string; revision: string }>
+    'diary.days.export': (input: { presetId?: string; dates: string[] }) => Promise<{ filename: string; content: string }>
+    'diary.days.remove': (input: { presetId?: string; dates: string[] }) => Promise<{ removed: string[] }>
+    'diary.book.format': (input: { presetId?: string }) => Promise<{ dates: string[]; changed: number }>
     'diary.mark.save': (input: { presetId?: string; date: string; level: number; note?: string }) => Promise<DiaryMark>
     'diary.mark.remove': (input: { presetId?: string; date: string }) => Promise<{ date: string; removed: boolean }>
     'diary.run': (input: { presetId?: string }) => Promise<{

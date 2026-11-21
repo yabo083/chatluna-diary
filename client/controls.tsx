@@ -1,11 +1,7 @@
 import * as React from 'react'
 import {
-  Loader2,
   MoreHorizontal,
   Pencil,
-  Plus,
-  Settings2,
-  Sparkles,
   Stamp,
   Trash2,
   type LucideIcon
@@ -52,7 +48,7 @@ export function MenuItem(props: {
   )
 }
 
-function Menu(props: {
+export function Menu(props: {
   label: string
   icon?: LucideIcon
   buttonClass?: string
@@ -100,68 +96,6 @@ export function EntryMenu(props: { title: string; onEdit(): void; onDelete(): vo
           <MenuItem
             icon={Trash2}
             label="删除这一篇"
-            danger
-            onClick={() => {
-              close()
-              props.onDelete()
-            }}
-          />
-        </>
-      )}
-    </Menu>
-  )
-}
-
-export function DayMenu(props: {
-  isToday: boolean
-  running: boolean
-  onCompose(): void
-  onEditDay(): void
-  onMark(): void
-  onRun(): void
-  onDelete(): void
-}) {
-  return (
-    <Menu label="当天操作" icon={Settings2}>
-      {(close) => (
-        <>
-          <MenuItem
-            icon={Plus}
-            label="新增一篇"
-            onClick={() => {
-              close()
-              props.onCompose()
-            }}
-          />
-          <MenuItem
-            icon={Pencil}
-            label="编辑当天"
-            onClick={() => {
-              close()
-              props.onEditDay()
-            }}
-          />
-          <MenuItem
-            icon={Stamp}
-            label="贴花"
-            onClick={() => {
-              close()
-              props.onMark()
-            }}
-          />
-          <div className="diary-menu-sep" />
-          <MenuItem
-            icon={props.running ? Loader2 : Sparkles}
-            label={props.running ? '正在写…' : props.isToday ? '让 AI 写今天' : '仅可生成今天'}
-            disabled={props.running || !props.isToday}
-            onClick={() => {
-              close()
-              props.onRun()
-            }}
-          />
-          <MenuItem
-            icon={Trash2}
-            label="删除当天"
             danger
             onClick={() => {
               close()
