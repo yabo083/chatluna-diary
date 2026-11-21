@@ -36,11 +36,11 @@ cat <plugin-root>/package.json
 
 从当前 WebUI/agent 的工具清单或 `index.ts` 读取：
 
-- `diary_context` 的参数、返回边界、是否排除工具噪音
-- `diary_read` 的默认天数、最大天数、字符上限
-- `diary_write` 的 `mode` 默认值（普通对话 vs 定时任务）
-- `diary_mark` 的等级范围、备注长度、语义
-- `diary_attach` 接受的路径根、扩展名、大小上限
+- `diary` 工具 `action: "context"` 的参数、返回边界、是否排除工具噪音
+- `action: "read"` 的默认天数、最大天数、字符上限
+- `action: "write"` 的 `mode` 默认值（普通对话 vs 定时任务）
+- `action: "mark"` 的等级范围、备注长度、语义
+- `action: "attach"` 接受的路径根、扩展名、大小上限
 
 若工具名与本文示例不同，**以当前清单为准**，并让 skill 使用实际名字。
 
@@ -177,7 +177,7 @@ description: "<一句话：什么时候用；包含插件名与当前部署的�
 - 精确参数名与必填/可选
 - `presetId` 何时可用（通常只有定时任务）
 - 上限（天数、字符、图片大小、备注长度）
-- 默认行为（尤其 `diary_write` 的 append/replace 分支）
+- 默认行为（尤其 `diary` 的 `action: "write"` append/replace 分支）
 - 失败时的可见错误，不要教模型重试绕过
 
 ### 3.3 不要把“无上下文”写成“随便编”
@@ -216,6 +216,6 @@ description: "<一句话：什么时候用；包含插件名与当前部署的�
 - 写死某个 presetId、角色名、服务器路径
 - 继续描述“叶/星/心”等已经删除的图形
 - 教模型“context 没有就猜”
-- 把 `diary_write` 的默认 append/replace 写反
+- 把 `diary` 的 `action: "write"` 默认 append/replace 写反
 - 把访问 token 写进 skill 或示例
 - 不给验证清单，生成后不 dry-run
