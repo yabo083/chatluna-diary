@@ -41,6 +41,8 @@ const MAX_DAY_BYTES = 1024 * 1024
 const MAX_MARKS_BYTES = 1024 * 1024
 /** A management export returns text to the model; this bounds the tool result. */
 const MAX_TOOL_EXPORT_CHARS = 48_000
+/** WebUI downloads stay bounded even when every day is at the file cap. */
+const MAX_WEBUI_EXPORT_BYTES = 16 * 1024 * 1024
 const JOB_PREFIX = 'chatluna-diary:'
 
 /** Defaults for every tunable the plugin page exposes; Settings mirrors these. */
@@ -269,76 +271,88 @@ async function collectDayMessages(ctx, preset, date) {
     if (cursor === undefined || (last !== undefined && last.lastActiveAt < start)) break
   }
 
-  const collected = []
-  const seen = new Set()
+  const matched = []
   for (const row of rows) {
     if (bookId(row.preset) !== preset) continue
     if (row.origin === 'subagent') continue
     if (row.id.startsWith('schedule:') || row.id.startsWith('sub:')) continue
     if (row.messageCount <= 0 || row.lastActiveAt < start) continue
-    const scene = row.conversationKey?.includes(':user:') ? 'dm' : 'group'
-    const conversation = row.conversationKey ?? row.id
+    matched.push({
+      row,
+      scene: row.conversationKey?.includes(':user:') ? 'dm' : 'group',
+      conversation: row.conversationKey ?? row.id
+    })
+  }
 
-    let view
-    let entries
-    try {
-      view = await sessions.view(row.id)
-      if (view === undefined) continue
-      entries = await readDayMessages(view, start)
-      // The row carries the current preset, so a session that switched presets
-      // still yields the old preset's messages. Keep only the current segment.
-      entries = currentPresetEntries(entries, preset, bookId)
-    } catch {
-      continue
-    }
+  const collected = []
+  const seen = new Set()
+  const READ_CONCURRENCY = 8
+  for (let offset = 0; offset < matched.length; offset += READ_CONCURRENCY) {
+    const batch = matched.slice(offset, offset + READ_CONCURRENCY)
+    const fetched = await Promise.allSettled(batch.map(async ({ row, scene, conversation }) => {
+      try {
+        const view = await sessions.view(row.id)
+        if (view === undefined) return undefined
+        // The row carries the current preset, so a session that switched presets
+        // still yields the old preset's messages. Keep only the current segment.
+        const entries = currentPresetEntries(await readDayMessages(view, start), preset, bookId)
+        return { scene, conversation, entries }
+      } catch {
+        return undefined
+      }
+    }))
 
-    for (const entry of entries) {
-      if (entry.time < start || entry.time >= end) continue
-      if (entry.kind !== 'message') continue
-      const message = entry.message
-      if (seen.has(message.id)) continue
-      seen.add(message.id)
-      if (message.role !== 'user' && message.role !== 'assistant') continue
-      if (message.source?.kind === 'tool' || message.source?.kind === 'plugin') continue
-      const envelopes = []
-      for (const block of message.content) if (block.type === 'envelope') envelopes.push(block)
-      if (envelopes.length > 0 && envelopes.every((block) => block.kind === 'notice')) continue
+    for (const result of fetched) {
+      if (result.status !== 'fulfilled' || result.value === undefined) continue
+      const { scene, conversation, entries } = result.value
+      for (const entry of entries) {
+        if (entry.time < start || entry.time >= end) continue
+        if (entry.kind !== 'message') continue
+        const message = entry.message
+        if (seen.has(message.id)) continue
+        seen.add(message.id)
+        if (message.role !== 'user' && message.role !== 'assistant') continue
+        if (message.source?.kind === 'tool' || message.source?.kind === 'plugin') continue
+        const envelopes = []
+        for (const block of message.content) if (block.type === 'envelope') envelopes.push(block)
+        if (envelopes.length > 0 && envelopes.every((block) => block.kind === 'notice')) continue
 
-      // A merged message carries one envelope per speaker; attributing the whole
-      // thing to the first sender would hand someone else's words to them.
-      let split = false
-      for (const envelope of envelopes) {
-        if (envelope.kind !== 'message') continue
-        split = true
-        const text = extractText(envelope.content ?? [])
-        const media = extractMedia(envelope.content ?? [])
+        // A merged message carries one envelope per speaker; attributing the whole
+        // thing to the first sender would hand someone else's words to them.
+        let split = false
+        for (const envelope of envelopes) {
+          if (envelope.kind !== 'message') continue
+          split = true
+          const text = extractText(envelope.content ?? [])
+          const media = extractMedia(envelope.content ?? [])
+          if (text === '' && media.length === 0) continue
+          collected.push({
+            time: Number.isFinite(envelope.time) ? envelope.time : entry.time,
+            role: envelope.sender?.self === true ? 'assistant' : 'user',
+            sender: envelope.sender?.name ?? (envelope.sender?.self === true ? selfName : '用户'),
+            senderId: envelope.sender?.id,
+            scene,
+            conversation,
+            text,
+            media
+          })
+        }
+        if (split) continue
+
+        // No envelopes: an assistant turn or a tool reply, kept as one item.
+        const text = extractText(message.content)
+        const media = extractMedia(message.content)
         if (text === '' && media.length === 0) continue
         collected.push({
-          time: Number.isFinite(envelope.time) ? envelope.time : entry.time,
-          role: envelope.sender?.self === true ? 'assistant' : 'user',
-          sender: envelope.sender?.name ?? (envelope.sender?.self === true ? selfName : '用户'),
-          senderId: envelope.sender?.id,
+          time: entry.time,
+          role: message.role,
           scene,
           conversation,
           text,
-          media
+          media,
+          sender: message.role === 'assistant' ? selfName : '用户'
         })
       }
-      if (split) continue
-
-      // No envelopes: an assistant turn or a tool reply, kept as one item.
-      const text = extractText(message.content)
-      const media = extractMedia(message.content)
-      if (text === '' && media.length === 0) continue
-      collected.push({
-        time: entry.time,
-        role: message.role,
-        scene,
-        conversation,
-        text,
-        media,
-        sender: message.role === 'assistant' ? selfName : '用户'
-      })
     }
   }
 
@@ -483,6 +497,16 @@ async function readDay(ctx, preset, date) {
     return await readFile(file, 'utf8')
   } catch (error) {
     if (error.code === 'ENOENT') return ''
+    throw error
+  }
+}
+
+async function dayExists(ctx, preset, date) {
+  try {
+    await stat(join(bookDirectory(ctx, preset), `${date}.md`))
+    return true
+  } catch (error) {
+    if (error.code === 'ENOENT') return false
     throw error
   }
 }
@@ -672,14 +696,42 @@ function removeDay(ctx, preset, date, expectedRevision) {
       throw new ApiError('CONFLICT', 'the diary changed while this page was open; reload and try again')
     }
     const marks = await readMarks(ctx, preset, true)
-    await unlink(join(bookDirectory(ctx, preset), `${date}.md`)).catch((error) => {
-      if (error.code !== 'ENOENT') throw error
-    })
     if (marks[date] !== undefined) {
       delete marks[date]
       await writeMarks(ctx, preset, marks)
     }
+    await unlink(join(bookDirectory(ctx, preset), `${date}.md`)).catch((error) => {
+      if (error.code !== 'ENOENT') throw error
+    })
     return { date }
+  })
+}
+
+/**
+ * Batch delete under one book lock. Marks commit first, then idempotent
+ * unlinks: a crash can leave an orphan .md, never a mark pointing at nothing.
+ */
+function removeDays(ctx, preset, dates) {
+  return serialize(bookDirectory(ctx, preset), async () => {
+    const marks = await readMarks(ctx, preset, true)
+    const missing = []
+    for (const date of dates) {
+      if (!await dayExists(ctx, preset, date) && marks[date] === undefined) missing.push(date)
+    }
+    if (missing.length > 0) throw new ApiError('NOT_FOUND', `days not in this book: ${missing.join(', ')}`)
+    let marksChanged = false
+    for (const date of dates) {
+      if (marks[date] === undefined) continue
+      delete marks[date]
+      marksChanged = true
+    }
+    if (marksChanged) await writeMarks(ctx, preset, marks)
+    for (const date of dates) {
+      await unlink(join(bookDirectory(ctx, preset), `${date}.md`)).catch((error) => {
+        if (error.code !== 'ENOENT') throw error
+      })
+    }
+    return { removed: dates }
   })
 }
 
@@ -738,11 +790,12 @@ function exportFilename(preset, dates) {
 }
 
 /** One Markdown document for a batch of days; each file is copied verbatim. */
-async function exportDays(ctx, preset, dates, maxChars = Infinity) {
+async function exportDays(ctx, preset, dates, maxChars = Infinity, maxBytes = Infinity) {
   const marks = await readMarks(ctx, preset)
   const sections = []
   const header = `# 日记导出 · ${preset}\n\n导出时间：${localTime(Date.now())}`
   let length = header.length
+  let bytes = Buffer.byteLength(header)
   for (const date of dates) {
     const day = (await readDay(ctx, preset, date)).replace(/\r\n?/g, '\n').trim()
     const mark = marks[date]
@@ -755,22 +808,25 @@ async function exportDays(ctx, preset, dates, maxChars = Infinity) {
     const section = lines.join('\n')
     const separator = sections.length === 0 ? 2 : 7
     const nextLength = length + separator + section.length
-    if (nextLength + 1 > maxChars) {
-      throw new ApiError('INVALID_ARGUMENT', `exported diary would exceed ${maxChars} characters; narrow the dates or shorten the day`)
+    const nextBytes = bytes + separator + Buffer.byteLength(section)
+    if (nextLength + 1 > maxChars || nextBytes + 1 > maxBytes) {
+      throw new ApiError('INVALID_ARGUMENT', 'exported diary would exceed its size limit; narrow the dates or shorten the day')
     }
     sections.push(section)
     length = nextLength
+    bytes = nextBytes
   }
   return { filename: exportFilename(preset, dates), content: `${header}\n\n${sections.join('\n\n---\n\n')}\n` }
 }
 
 /** Add a missing date header and normalize line endings; never rewrite body syntax. */
-function formatBook(ctx, preset) {
-  return serialize(bookDirectory(ctx, preset), async () => {
-    const dates = (await listDates(ctx, preset)).map(({ date }) => date).sort()
-    let changed = 0
-    let skipped = 0
-    for (const date of dates) {
+async function formatBook(ctx, preset) {
+  const dates = (await listDates(ctx, preset)).map(({ date }) => date).sort()
+  let changed = 0
+  let skipped = 0
+  for (const date of dates) {
+    await serialize(bookDirectory(ctx, preset), async () => {
+      if (!await dayExists(ctx, preset, date)) return
       let raw
       try {
         raw = await readDay(ctx, preset, date)
@@ -778,7 +834,7 @@ function formatBook(ctx, preset) {
         if (error instanceof ApiError && /exceeds .* bytes/.test(error.message)) {
           skipped += 1
           ctx.logger.warn('diary format skipped oversized day %s/%s', preset, date)
-          continue
+          return
         }
         throw error
       }
@@ -787,13 +843,13 @@ function formatBook(ctx, preset) {
         content = content === '' ? `# ${date}` : `# ${date}\n\n${content}`
       }
       const next = `${content}\n`
-      if (next === raw) continue
+      if (next === raw) return
       assertDayBytes(next, date)
       await writeAtomic(join(bookDirectory(ctx, preset), `${date}.md`), next)
       changed += 1
-    }
-    return { dates, changed, skipped }
-  })
+    })
+  }
+  return { dates, changed, skipped }
 }
 
 async function listDates(ctx, preset) {
@@ -1171,20 +1227,7 @@ function createManageTool() {
       }
       if (input.action === 'delete') {
         const dates = batchDates(input.dates)
-        const marks = await readMarks(call.caller, preset, true)
-        const missing = []
-        for (const date of dates) {
-          let exists = false
-          try {
-            await stat(join(bookDirectory(call.caller, preset), `${date}.md`))
-            exists = true
-          } catch (error) {
-            if (error.code !== 'ENOENT') throw error
-          }
-          if (!exists && marks[date] === undefined) missing.push(date)
-        }
-        if (missing.length > 0) throw new ApiError('NOT_FOUND', `days not in this book: ${missing.join(', ')}`)
-        for (const date of dates) await removeDay(call.caller, preset, date)
+        await removeDays(call.caller, preset, dates)
         queueMediaSweep(call.caller, preset)
         refreshDiary(call.caller)
         return `已删除 ${dates.length} 天：${dates.join(', ')}。`
@@ -1346,20 +1389,15 @@ export function apply(ctx, config = {}) {
 
   ctx.chatluna_webui.action('diary.days.export', { input: DaysInput }, async ({ presetId, dates }) => {
     const preset = actionBook(ctx, presetId)
-    return exportDays(ctx, preset, batchDates(dates))
+    return exportDays(ctx, preset, batchDates(dates), Infinity, MAX_WEBUI_EXPORT_BYTES)
   })
 
   ctx.chatluna_webui.action('diary.days.remove', { input: DaysInput }, async ({ presetId, dates }) => {
     const preset = actionBook(ctx, presetId)
-    const days = batchDates(dates)
-    const removed = []
-    for (const day of days) {
-      await removeDay(ctx, preset, day)
-      removed.push(day)
-    }
+    const result = await removeDays(ctx, preset, batchDates(dates))
     queueMediaSweep(ctx, preset)
     refreshDiary(ctx)
-    return { removed }
+    return result
   })
 
   ctx.chatluna_webui.action('diary.book.format', { input: BookFormatInput }, async ({ presetId }) => {
