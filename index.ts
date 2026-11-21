@@ -258,7 +258,7 @@ async function readDayMessages(view, start, isCancelled = () => false) {
   return entries
 }
 
-async function collectDayMessages(ctx, preset, date) {
+async function collectDayMessages(ctx, preset, date, deadlineMs = CONTEXT_READ_DEADLINE_MS) {
   const conversations = ctx.get('conversations')
   const sessions = ctx.get('sessions')
   if (conversations === undefined || sessions === undefined) {
@@ -268,7 +268,7 @@ async function collectDayMessages(ctx, preset, date) {
   const start = new Date(year, month - 1, day).getTime()
   const end = new Date(year, month - 1, day + 1).getTime()
   const selfName = ctx.get('presets')?.list().find((record) => record.id === preset)?.name || preset
-  const deadline = Date.now() + CONTEXT_READ_DEADLINE_MS
+  const deadline = Date.now() + deadlineMs
   let truncated = false
 
   const rows = []
