@@ -1086,6 +1086,12 @@ function createManageTool() {
       }
       if (input.action === 'delete') {
         const dates = batchDates(input.dates)
+        const known = new Set([
+          ...(await listDates(call.caller, preset)).map(({ date }) => date),
+          ...Object.keys(await readMarks(call.caller, preset))
+        ])
+        const missing = dates.filter((date) => !known.has(date))
+        if (missing.length > 0) throw new ApiError('NOT_FOUND', `days not in this book: ${missing.join(', ')}`)
         for (const date of dates) await removeDay(call.caller, preset, date)
         queueMediaSweep(call.caller, preset)
         refreshDiary(call.caller)
