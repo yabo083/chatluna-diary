@@ -15,7 +15,75 @@ export interface DiaryBook {
   description?: string
   days: number
   marks: number
+  history: boolean
   latest: string | null
+}
+
+export interface DiaryCommitRow {
+  id: string
+  date: string
+  at: number
+  op: string
+  source: 'webui' | 'model' | 'schedule' | 'system'
+  summary: string
+  title?: string
+  index?: number
+  beforeExists: boolean
+  afterExists: boolean
+  beforeBytes: number
+  afterBytes: number
+}
+
+export interface DiaryDeletedDay {
+  date: string
+  id: string
+  at: number
+  summary: string
+  bytes: number
+}
+
+export interface DiaryHistoryPage {
+  rows: DiaryCommitRow[]
+  deleted: DiaryDeletedDay[]
+  hasMore: boolean
+  head: string | null
+  revision: string | null
+}
+
+export interface DiaryDiffLine {
+  kind: 'context' | 'add' | 'del'
+  oldNo: number | null
+  newNo: number | null
+  text: string
+}
+
+export interface DiaryDiff {
+  id: string
+  date: string
+  at: number
+  op: string
+  source: string
+  summary: string
+  beforeExists: boolean
+  afterExists: boolean
+  lines: DiaryDiffLine[]
+  added: number
+  removed: number
+  truncated: boolean
+  reason?: string
+}
+
+export type DiaryScheduleMode = 'managed' | 'cancelled' | 'disabled' | 'unavailable' | 'unmanaged'
+
+export interface DiaryScheduleView {
+  presetId: string
+  mode: DiaryScheduleMode
+  status: 'active' | 'paused' | 'done' | 'failed' | 'pending' | null
+  cron: string
+  jobId?: string
+  next?: number
+  pending?: boolean
+  rev?: number
 }
 
 export interface DiaryEntryRow {
@@ -70,6 +138,18 @@ declare module '@chatluna/ui-client/client' {
       durationMs?: number
       detail?: unknown
     }>
+    'diary.history.diff': (input: { presetId?: string; id: string }) => Promise<DiaryDiff>
+    'diary.history.restore': (input: {
+      presetId?: string
+      date: string
+      id: string
+      side: 'before' | 'after'
+      revision?: string
+    }) => Promise<{ changed: boolean; date: string; revision: string | null }>
+    'diary.schedule.pause': (input: { presetId?: string }) => Promise<DiaryScheduleView>
+    'diary.schedule.resume': (input: { presetId?: string }) => Promise<DiaryScheduleView>
+    'diary.schedule.cancel': (input: { presetId?: string }) => Promise<DiaryScheduleView>
+    'diary.schedule.enable': (input: { presetId?: string }) => Promise<DiaryScheduleView>
   }
 
   interface States {
@@ -77,5 +157,7 @@ declare module '@chatluna/ui-client/client' {
     'diary.dates': { dates: DiaryDateRow[] }
     'diary.marks': { marks: DiaryMark[] }
     'diary.entry': DiaryEntryView | null
+    'diary.history': DiaryHistoryPage
+    'diary.schedule': DiaryScheduleView
   }
 }

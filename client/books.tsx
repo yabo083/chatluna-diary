@@ -18,9 +18,24 @@ function downloadText(filename: string, content: string) {
 function BookCard(props: { book: DiaryBook; onOpen(): void }) {
   const { book } = props
   const dates = useLive('diary.dates', { presetId: book.presetId })
+  const schedule = useLive('diary.schedule', { presetId: book.presetId })
   const days = (dates.data?.dates ?? []).map((row) => row.date)
   const [busy, setBusy] = React.useState<'export' | 'format' | 'delete'>()
   const [confirm, setConfirm] = React.useState(false)
+  const cron = schedule.data
+  const cronLabel = cron === undefined || cron.mode === 'disabled'
+    ? '定时未启用'
+    : cron.mode === 'unmanaged'
+      ? '不参与定时'
+      : cron.mode === 'cancelled'
+        ? '定时已停用'
+        : cron.mode === 'unavailable'
+          ? '定时不可用'
+          : cron.status === 'paused'
+            ? '定时已暂停'
+            : cron.status === 'active'
+              ? '定时运行中'
+              : '定时待启动'
 
   const exportAll = async () => {
     if (days.length === 0) return
@@ -73,7 +88,11 @@ function BookCard(props: { book: DiaryBook; onOpen(): void }) {
           {book.description === undefined ? null : <span className="diary-book-desc">{book.description}</span>}
           <span className="diary-book-meta">
             <span className="diary-book-stats">
-              {book.days} 天 · {book.marks} 个标记
+              {book.days} 天 · {book.marks} 个标记{book.history ? ' · 有历史' : ''}
+            </span>
+            <span className={`diary-cron-tag is-${cron?.mode ?? 'loading'}`}>
+              <span className="cron-dot" aria-hidden="true" />
+              {cronLabel}
             </span>
             <span className="diary-book-latest">{book.latest === null ? '还没有记录' : `最近 ${book.latest}`}</span>
           </span>
@@ -121,7 +140,7 @@ function BookCard(props: { book: DiaryBook; onOpen(): void }) {
       {confirm ? (
         <div className="diary-book-confirm" role="alertdialog">
           <p>
-            删除《{book.name}》全部 {days.length} 天日记和贴花？不可撤销。
+            删除《{book.name}》全部 {days.length} 天日记和贴花？文字可从「历史」找回（图片除外）。
           </p>
           <div className="diary-inline-actions">
             <button type="button" className="diary-action is-ghost" onClick={() => setConfirm(false)} disabled={busy !== undefined}>

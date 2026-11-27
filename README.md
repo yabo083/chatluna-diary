@@ -6,11 +6,12 @@ A per-preset diary for ChatLuna v2 WebUI: read the day's real conversation diges
 
 - **One book per preset** under `data/chatluna/diary/<presetId>/`.
 - **Three model-facing tools**, split by intent:
-  - `diary_read` — `action: "list" | "read" | "context"`: one paginated index page (dates, marks, titles, first lines; `before`/`limit`), existing entries (up to 7 days / ~12k chars), and a bounded day digest.
+  - `diary_read` — `action: "list" | "read" | "context" | "history" | "history_diff"`: one paginated index page (dates, marks, titles, first lines; `before`/`limit`), existing entries (up to 7 days / ~12k chars), a bounded day digest, one page of commit history, and a bounded diff for one commit (the last two interactive chats only).
   - `diary_write` — `action: "write" | "mark" | "attach"`: append/replace writing, 1–5 marks, and workspace image copy.
-  - `diary_manage` — `action: "export" | "format" | "delete"`: explicit-date export, conservative formatting, and deletion, always offered to the AI.
+  - `diary_manage` — `action: "export" | "format" | "delete" | "restore"`: explicit-date export, conservative formatting, deletion, and restoring the `before`/`after` side of a commit while the current content and marks still match; always offered to the AI.
 - **Marks are one mark, stacked**: a single hand-drawn vermilion brush circle is repeated 1–5 times for levels 1–5. The mask is shipped inline; no external image request.
-- **Scheduled writing**: one job per preset at local 22:00 (`0 22 * * *`), with the preset locked to its own book.
+- **Scheduled writing**: one job per preset at local 22:00 (`0 22 * * *`), with the preset locked to its own book. The book header exposes run / pause / resume / permanently stop; a stop is persisted in `data/chatluna/diary/.schedule-v1.json` and is never resurrected by a restart.
+- **History**: every write, edit, delete, mark, format and restore appends a git-like commit; the history drawer shows a timeline, a bounded unified diff, and can restore either side of a change. Deleted days stay recoverable after the `.md` file is gone. The model sees the same log through `diary_read` `history`/`history_diff` and can restore the newest change of one date while nothing has changed since; older versions are restored from that day's own history in the WebUI.
 - **WebUI**: a V2 book page, calendar with marks, index, reading pane, media blob loading, and a hidden `/diary/preview` layout showcase.
 - **Management**: each book card has a corner menu (export all, format, delete all); the book header has a batch button for marquee-selecting days and exporting/deleting them. Day configuration lives in each entry's `...` icon menu (edit/delete entry, mark level, delete day); new entries use the bottom composer. There is no all-in-one management modal, separate paper toolbar, or manual AI-write button.
 - **Tool loading**: all three diary tools are marked resident (`deferred: false`), so a scheduled run can call the ones it is allowed to see even when tool search is on.
@@ -56,11 +57,16 @@ data/chatluna/diary/<presetId>/
   YYYY-MM-DD.md      one day, possibly several "## title" entries
   marks.json         { "version": 1, "marks": { "YYYY-MM-DD": { level, note?, updatedAt } } }
   media/             images copied by the diary_write attach action
+  .history/
+    commits.jsonl    append-only commit log; a torn last line is ignored
+    objects/<sha256> exact day bytes, deduplicated across commits
+data/chatluna/diary/.schedule-v1.json
+                     per-book schedule registry and cancel tombstones
 ```
 
 `presetId` is sanitized to `[A-Za-z0-9][A-Za-z0-9._-]*`; anything else falls back to `default`. A normal chat cannot write another preset's book; only the scheduled runner may pass `presetId` for its own job. If a conversation switched presets in place, only entries after the most recent `chatluna:preset` switch are eligible for the current preset; earlier segments are discarded rather than mixed into the diary.
 
-Each day file is capped at 1 MiB for normal reads and writes. A legacy day above the cap is unreadable to `read` and `export` and is skipped by `format`, but it can still be replaced or deleted without reading the old body first. `marks.json` is capped at 1 MiB; on repair, a damaged or oversized marks file is moved aside to a timestamped backup.
+Each day file is capped at 1 MiB for normal reads and writes. A legacy day above the cap is unreadable to `read` and `export` and is skipped by `format`; deleting it is refused rather than losing text the history cannot record. `marks.json` is capped at 1 MiB; on repair, a damaged or oversized marks file is moved aside to a timestamped backup.
 
 ## Tools
 
@@ -69,18 +75,23 @@ Each day file is capped at 1 MiB for normal reads and writes. A legacy day above
 | `diary_read` | `list` | One compact-index page: dates, mark levels, entry titles and first lines — no bodies; reports the whole-book total |
 | | `read` | Existing entries for the current preset (up to 7 days / ~12k chars) |
 | | `context` | Bounded digest of the day's real conversation, tool noise excluded |
+| | `history` | One page (≤8,192 UTF-8 bytes) of commit metadata (id, date/time, source, op, summary, byte sizes) for one date or the whole book; `historyLimit` 1–24 default 12, `cursor` is an opaque commit id from `next=<id>` (`next=none` when exhausted); interactive chats only |
+| | `history_diff` | Bounded unified diff for one commit `id` (≤12,288 UTF-8 bytes / 80 lines); a mark-only change is reported apart from a missing commit; interactive chats only |
 | `diary_write` | `write` | Append or replace one day's Markdown |
 | | `mark` | Set mark level 1–5 plus an optional 80-char note |
 | | `attach` | Copy a workspace image and return a `diary-media:` Markdown tag |
 | `diary_manage` | `export` | Export explicitly named dates chosen from `list` |
 | | `format` | Add a missing date header and normalize line endings; body syntax preserved |
 | | `delete` | Delete named dates; absent dates are reported, not errors |
+| | `restore` | Restore the `before` or `after` side of one commit `id` as a new commit; only while current content and marks still match the opposite side |
 
 `diary_read` action `list` is the discovery entry. It returns at most one metadata page (`before` is an exclusive date, `limit` defaults to 30 and caps at 100), includes mark-only dates, reports the book total, and names the `before` value for the next older page. A day over the size cap shows as skipped.
 
-`diary_manage` always exposes `export`, `format` and `delete` to the model; there is no plugin config gate or action allow-list. `export` requires explicit `dates` picked from `list` — there is no implicit whole-book export — and fails explicitly when the result exceeds its output budget. `format` only adds a missing `# YYYY-MM-DD` header and normalizes line endings, preserving body syntax, code and hard breaks; it locks one day at a time, skips oversized days, and makes at most three short passes so dates created during the scan are picked up (anything still new is reported pending). `delete` is idempotent: existing dates and their marks are committed under one book lock, marks are written first, file unlinks are idempotent, and dates that were already absent are reported rather than failing the whole batch. `context` has a bounded read deadline and retains at most 2,000 raw messages; when either limit is reached the returned text explicitly says the digest only covers what was read, and in-flight page reads stop at the next page boundary. Deletion still happens only when the user explicitly asks for it. The WebUI management menus described above are the user's own equivalent path and can still export selected days or the whole book; that download is capped at 16 MiB.
+`diary_manage` always exposes `export`, `format`, `delete` and `restore` to the model; there is no plugin config gate or action allow-list. `export` requires explicit `dates` picked from `list` — there is no implicit whole-book export — and fails explicitly when the result exceeds its output budget. `format` only adds a missing `# YYYY-MM-DD` header and normalizes line endings, preserving body syntax, code and hard breaks; it locks one day at a time, skips oversized days, and makes at most three short passes so dates created during the scan are picked up (anything still new is reported pending). `delete` is idempotent: each date is snapshotted into history first, then marks and files are removed under one book lock, and dates that were already absent are reported as absent rather than failing the batch. `context` has a bounded read deadline and retains at most 2,000 raw messages; when either limit is reached the returned text explicitly says the digest only covers what was read, and in-flight page reads stop at the next page boundary. Deletion still happens only when the user explicitly asks for it. The WebUI management menus described above are the user's own equivalent path and can still export selected days or the whole book; that download is capped at 16 MiB.
 
-Scheduled diary runs see only `diary_read` and `diary_write` (`list` included); `diary_manage` is not registered for them.
+`diary_read` actions `history` and `history_diff` are interactive-chat only; scheduled runs never see them. `history` returns one page of at most 8,192 UTF-8 bytes of commit metadata for a named date or, with `date` omitted, the whole book plus the deleted dates history can still recover, paging with `historyLimit` (1–24, default 12) and the opaque commit `cursor` from `next=<id>` (`next=none` when exhausted). `history_diff` returns a unified diff for one commit, capped at 12,288 UTF-8 bytes and 80 lines, and reports a mark-only change separately from a missing commit. `diary_manage` action `restore` restores the `before` or `after` side of a commit as a new commit rather than rewinding the log; it is allowed only while the current content and recorded marks still equal the opposite side of that commit, otherwise it returns `CONFLICT` and the user restores from that day's own history in the WebUI. Media binaries are not versioned: a restored Markdown tag points at a file only while the media sweep has not removed it, and attached images stay capped at 8 MB.
+
+Scheduled diary runs see only `diary_read` and `diary_write` (`list` included; `history` and `history_diff` are interactive-chat only and stay unavailable); `diary_manage` — `restore` included — is not registered for them.
 
 The model-facing contract is also injected into each agent's system prompt. Keep it in sync with `index.ts` when tools change.
 
@@ -97,7 +108,31 @@ These fields are exported as the plugin `Config` and appear on the ChatLuna plug
 - `maxImageMb` (default 8)
 - `mediaRetentionHours` (default 24)
 
-Disabling the schedule removes this plugin's existing jobs; manual tool calls are unaffected.
+Disabling the schedule removes this plugin's existing jobs but keeps their registry rows as `suspended`; re-enabling recreates them with the status they had. Manual tool calls are unaffected.
+
+## History and recovery
+
+Every mutation appends one commit to `<book>/.history/commits.jsonl`:
+
+- write/append, entry edit, entry delete, day replace, day delete, batch delete, format, mark changes and restores;
+- `before` and `after` point at content-addressed objects (`objects/<sha256>`), so identical text is stored once;
+- a `null` side means the day file did not exist; an empty file is a real, distinct state;
+- marks travel with the commit only when that operation changed them.
+
+Bounds per book: 2,000 commits, 64 commits per date, 512 MiB of unique objects and 4,096 objects. The object budget covers a full 366-day batch delete even when every day is at the 1 MiB cap. Compaction runs when the log passes 16 KiB so object growth stays under budget; it keeps the newest commits per date and overall, rewrites the log atomically, and unlinks objects no retained commit references. The log is append-only and a torn last line is ignored. Deletions are recorded **before** the unlink, so a crash can leave a delete commit while the file survives, but can never lose the text. Ordinary edits record after the write: a crash in that window can lose one history entry, not the diary.
+
+Restore writes a new `restore` commit instead of rewinding. The day view sends the revision it previewed; a mismatch returns `CONFLICT`, and the current state is snapshotted before any destructive restore. Book-wide history can only restore the newest side of a date; older versions must be restored from that day's own history. Media binaries are not versioned: a restored Markdown tag points at a file only if the media sweep has not removed it.
+
+## Schedule ownership
+
+`@chatluna/schedule.set()` replaces a paused job with a fresh active one (its fast path only accepts `status === 'active'`), and a missing job is indistinguishable from a brand-new preset. The plugin therefore keeps `data/chatluna/diary/.schedule-v1.json`:
+
+- `managed` rows own a job id; reconciliation only calls `update()` for a changed cron/prompt and never touches `status`, so pause survives restarts and config edits;
+- a `removed` event for the current job, or a managed row whose job disappeared, writes a `cancelled` tombstone and is never recreated;
+- plugin unload/reload marks rows `suspended` and removes the job; the next mount recreates it with the saved status, so a reload is not a user cancel;
+- the book header controls run, pause, resume, stop and re-enable; `scheduleEnabled=false` suspends every row and re-enabling recreates them.
+
+Legacy installs adopt the jobs already present in the scheduler on first run. A job removed before this registry existed cannot be distinguished from one that never existed, so the first upgrade may create it once; after that, cancels persist.
 
 ## Marks
 
@@ -155,8 +190,8 @@ The first publish must exist before trusted publishing can be attached; publish 
 
 - Diary tools are limited to the owner's **direct chat**, an authenticated **WebUI conversation**, or a diary-scheduled run created by this plugin. Group members sharing the preset get `FORBIDDEN`; the WebUI token remains the page-level authority.
 - The scheduled diary run gets a per-agent tool filter: only `diary_read` and `diary_write` are visible. Management is not available to scheduled runs — `diary_manage` is not registered for them. Group text is still untrusted input, but it cannot reach shell/filesystem tools through this agent.
-- In a normal direct chat or WebUI conversation, `diary_manage` exposes `export`, `format` and `delete` with no config gate. `export` requires explicit dates and fails rather than truncating over budget; `format` preserves body bytes apart from headers and line endings and locks one day at a time; batch `delete` is idempotent under one book lock: marks commit first, then idempotent unlinks, and already-absent dates are reported as absent. A crash or failed unlink therefore converges on retry instead of leaving permanent phantom marks. It runs only on an explicit user request. The WebUI management menus remain the user's own authority; WebUI export is capped at 16 MiB.
-- Diary files are private (new files `0600`, directories `0700`) and capped at 1 MiB per day and 1 MiB for `marks.json`. An oversized legacy day stays replaceable or deletable but is unreadable to `read`/`export` and skipped by `format`. The plugin writes under the ChatLuna data directory; restrict the deployment account and backups accordingly.
+- In a normal direct chat or WebUI conversation, `diary_manage` exposes `export`, `format`, `delete` and `restore` with no config gate; `restore` writes a new commit and only succeeds while the current content and recorded marks still equal the opposite side of that commit; otherwise it returns `CONFLICT` and the user restores from that day's history in the WebUI. `export` requires explicit dates and fails rather than truncating over budget; `format` preserves body bytes apart from headers and line endings and locks one day at a time; batch `delete` is idempotent under one book lock: each date is snapshotted to history first, then marks and idempotent unlinks, and already-absent dates are reported as absent. A crash or failed unlink therefore converges on retry instead of losing text. It runs only on an explicit user request. The WebUI management menus remain the user's own authority; WebUI export is capped at 16 MiB.
+- Diary files are private (new files `0600`, directories `0700`) and capped at 1 MiB per day and 1 MiB for `marks.json`. An oversized legacy day is unreadable to `read`/`export`, skipped by `format`, and refused for replace/delete so text the history cannot record is not silently lost. The plugin writes under the ChatLuna data directory; restrict the deployment account and backups accordingly.
 - External images in diary Markdown are replaced with a blocked placeholder, so opening a page cannot probe external or localhost URLs. Links open with `noopener noreferrer`.
 - The digest redacts links, keys, tokens and local addresses, but it is still model input from untrusted conversations. Treat it as data, never as instructions. Scheduled prompts say the same.
 - `diary_write` action `attach` only accepts real files inside the agent workspace, rejects hardlinked files, images ≤8 MB, and the documented extensions.

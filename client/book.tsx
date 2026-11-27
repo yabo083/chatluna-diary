@@ -1,11 +1,28 @@
 import * as React from 'react'
 import MarkdownIt from 'markdown-it-ts'
 import { apiErrorMessage, callAction, toast, useLive } from '@chatluna/ui-client/client'
-import { Calendar, Check, ChevronLeft, ChevronRight, Download, ListChecks, Plus, Trash2, X } from 'lucide-react'
+import {
+  Calendar,
+  Check,
+  ChevronDown,
+  ChevronLeft,
+  ChevronRight,
+  CircleOff,
+  Clock,
+  Download,
+  History,
+  ListChecks,
+  Pause,
+  Play,
+  Plus,
+  Trash2,
+  X
+} from 'lucide-react'
 import { useNavigate, useParams } from 'react-router'
-import type { DiaryDateRow, DiaryEntryRow, DiaryMark } from './types'
+import type { DiaryDateRow, DiaryEntryRow, DiaryMark, DiaryScheduleView } from './types'
 import { calendarBadge } from './calendar-meta'
-import { EntryMenu, InlineConfirm, InlineEntryForm } from './controls'
+import { EntryMenu, InlineConfirm, InlineEntryForm, MenuItem, useDismiss } from './controls'
+import { DiaryHistoryDrawer } from './history'
 import { MarkStamp, type MarkLevel } from './stickers'
 import './diary.css'
 import './styles/variant-signature.css'
@@ -109,6 +126,133 @@ function DiaryMark(props: { level: number; note?: string }) {
   )
 }
 
+function cronText(cron: string) {
+  const parts = cron.trim().split(/\s+/)
+  if (parts.length === 5 && /^\d+$/.test(parts[0]) && /^\d+$/.test(parts[1])) {
+    return `${String(Number(parts[1])).padStart(2, '0')}:${String(Number(parts[0])).padStart(2, '0')}`
+  }
+  return cron
+}
+
+function scheduleLabel(view: DiaryScheduleView | undefined) {
+  if (view === undefined) return '定时…'
+  if (view.mode === 'disabled') return '定时未启用'
+  if (view.mode === 'unavailable') return '定时不可用'
+  if (view.mode === 'unmanaged') return '不参与定时'
+  if (view.mode === 'cancelled') return '定时已停用'
+  if (view.status === 'paused') return '定时已暂停'
+  if (view.status === 'active') return `每天 ${cronText(view.cron)}`
+  if (view.status === 'failed') return '定时失败'
+  if (view.status === 'done') return '定时已结束'
+  return '定时准备中'
+}
+
+function ScheduleControl(props: { presetId: string; disabled: boolean }) {
+  const view = useLive('diary.schedule', { presetId: props.presetId })
+  const data = view.data
+  const [open, setOpen] = React.useState(false)
+  const [busy, setBusy] = React.useState<string>()
+  const [confirm, setConfirm] = React.useState(false)
+  const ref = React.useRef<HTMLDivElement>(null)
+  useDismiss(open, () => setOpen(false), ref)
+
+  const act = async (kind: 'pause' | 'resume' | 'cancel' | 'enable' | 'run') => {
+    setBusy(kind)
+    try {
+      if (kind === 'run') {
+        await callAction('diary.run', { presetId: props.presetId })
+        toast.success('已触发一次自动写作')
+      } else if (kind === 'pause') {
+        await callAction('diary.schedule.pause', { presetId: props.presetId })
+        toast.success('已暂停定时任务')
+      } else if (kind === 'resume') {
+        await callAction('diary.schedule.resume', { presetId: props.presetId })
+        toast.success('已恢复定时任务')
+      } else if (kind === 'cancel') {
+        await callAction('diary.schedule.cancel', { presetId: props.presetId })
+        toast.success('已停用定时任务，重启后也不会自动恢复')
+      } else {
+        await callAction('diary.schedule.enable', { presetId: props.presetId })
+        toast.success('已重新启用定时任务')
+      }
+      setConfirm(false)
+      setOpen(false)
+    } catch (error) {
+      toast.error('定时任务操作失败', { description: apiErrorMessage(error) })
+    } finally {
+      setBusy(undefined)
+    }
+  }
+
+  const mode = data?.mode
+  const label = scheduleLabel(data)
+  return (
+    <div className="diary-cron-control" ref={ref}>
+      <button
+        type="button"
+        className={`diary-meta-badge is-interactive diary-cron-badge is-${mode ?? 'loading'}`}
+        aria-haspopup="menu"
+        aria-expanded={open}
+        title={label}
+        disabled={props.disabled || mode === 'unavailable'}
+        onClick={() => setOpen((value) => !value)}
+      >
+        <Clock className="diary-meta-icon" aria-hidden="true" />
+        <span>{label}</span>
+        <ChevronDown className="diary-cron-arrow" aria-hidden="true" />
+      </button>
+      {open ? (
+        <div className="diary-menu-pop diary-cron-pop" role="menu">
+          <p className="diary-menu-label">每日自动日记</p>
+          <p className="diary-cron-desc">
+            {mode === 'disabled'
+              ? '插件设置里关闭了定时任务。打开“启用每日自动日记”后会重新登记。'
+              : mode === 'unmanaged'
+                ? '这不是预设日记簿，没有可登记的每日定时任务。'
+                : mode === 'cancelled'
+                ? '这本书的定时任务已彻底停用，重启不会恢复。'
+                : mode === 'unavailable'
+                  ? '定时服务或登记文件不可用，暂时不能修改。'
+                  : `按 ${cronText(data?.cron ?? '')} 自动总结当天的对话并写入。`}
+          </p>
+          <div className="diary-menu-sep" />
+          {mode === 'cancelled' ? (
+            <MenuItem icon={Play} label={busy === 'enable' ? '启用中…' : '重新启用定时'} disabled={busy !== undefined} onClick={() => void act('enable')} />
+          ) : null}
+          {mode === 'managed' && data?.status === 'active' ? (
+            <MenuItem icon={Play} label={busy === 'run' ? '正在写…' : '立即写一次'} disabled={busy !== undefined} onClick={() => void act('run')} />
+          ) : null}
+          {mode === 'managed' && data?.status === 'active' ? (
+            <MenuItem icon={Pause} label={busy === 'pause' ? '暂停中…' : '暂停定时任务'} disabled={busy !== undefined} onClick={() => void act('pause')} />
+          ) : null}
+          {mode === 'managed' && data?.status === 'paused' ? (
+            <MenuItem icon={Play} label={busy === 'resume' ? '恢复中…' : '恢复定时任务'} disabled={busy !== undefined} onClick={() => void act('resume')} />
+          ) : null}
+          {mode === 'managed' && (data?.status === 'failed' || data?.status === 'done') ? (
+            <MenuItem icon={Play} label={busy === 'resume' ? '恢复中…' : '重新启用定时'} disabled={busy !== undefined} onClick={() => void act('resume')} />
+          ) : null}
+          {mode === 'managed' ? (
+            <MenuItem icon={CircleOff} label="停用此任务" danger disabled={busy !== undefined} onClick={() => setConfirm(true)} />
+          ) : null}
+          {confirm ? (
+            <div className="diary-cron-confirm" role="alertdialog">
+              <p>停用《{props.presetId}》的每日定时日记？此设置会持久保存，重启后也不会自动恢复。</p>
+              <div className="diary-inline-actions">
+                <button type="button" className="diary-action is-ghost" disabled={busy !== undefined} onClick={() => setConfirm(false)}>
+                  取消
+                </button>
+                <button type="button" className="diary-action is-danger-solid" disabled={busy !== undefined} onClick={() => void act('cancel')}>
+                  {busy === 'cancel' ? '停用中…' : '停用并不再自启'}
+                </button>
+              </div>
+            </div>
+          ) : null}
+        </div>
+      ) : null}
+    </div>
+  )
+}
+
 export function DiaryBookPage() {
   const { presetId = 'default' } = useParams()
   const navigate = useNavigate()
@@ -131,6 +275,8 @@ export function DiaryBookPage() {
   const [selectedDates, setSelectedDates] = React.useState<Set<string>>(new Set())
   const [batchConfirm, setBatchConfirm] = React.useState(false)
   const [batchBusy, setBatchBusy] = React.useState<string>()
+  const [historyOpen, setHistoryOpen] = React.useState(false)
+  const [historyDate, setHistoryDate] = React.useState<string>()
   const calendarRef = React.useRef<HTMLElement>(null)
   const [marquee, setMarquee] = React.useState<{ left: number; top: number; width: number; height: number }>()
 
@@ -469,6 +615,19 @@ export function DiaryBookPage() {
           <p className="diary-subtitle">把今天轻轻收进这一页。</p>
         </div>
         <div className="diary-header-side">
+          <ScheduleControl presetId={presetId} disabled={batch} />
+          <button
+            type="button"
+            className="diary-meta-badge is-interactive"
+            onClick={() => {
+              setHistoryDate(undefined)
+              setHistoryOpen(true)
+            }}
+            title="查看整本日记的修改历史"
+          >
+            <History className="diary-meta-icon" aria-hidden="true" />
+            <span>历史</span>
+          </button>
           <button
             type="button"
             className="diary-meta-badge is-interactive"
@@ -525,7 +684,7 @@ export function DiaryBookPage() {
           </div>
           {batchConfirm ? (
             <InlineConfirm
-              message={`确定删除选中的 ${selectedDates.size} 天日记和贴花？不可撤销。`}
+              message={`确定删除选中的 ${selectedDates.size} 天日记和贴花？文字可从「历史」找回（图片除外）。`}
               busy={batchBusy === 'delete'}
               confirmLabel="删除选中"
               onConfirm={() => void removeSelected()}
@@ -688,14 +847,27 @@ export function DiaryBookPage() {
               </div>
               <span className="diary-reading-rule" aria-hidden="true" />
             </div>
+            <div className="diary-reading-tools">
+              <button
+                type="button"
+                className="diary-action is-ghost"
+                onClick={() => {
+                  setHistoryDate(selected)
+                  setHistoryOpen(true)
+                }}
+              >
+                <History />
+                这一天历史
+              </button>
+            </div>
           </header>
 
           <article className="diary-paper" ref={entryRef} aria-busy={entry.status === 'loading'}>
               {confirm?.kind === 'day' ? (
                 <InlineConfirm
-                  message={`确定删除 ${selected} 的整篇日记吗？包含全部条目与贴花，不可撤销。`}
+                  message={`确定删除 ${selected} 的整篇日记吗？包含全部条目与贴花，文字可从「历史」找回（图片除外）。`}
                   busy={busy === 'delete-day'}
-                  confirmLabel="彻底删除"
+                  confirmLabel="删除这天"
                   onConfirm={() => void removeDay()}
                   onCancel={() => setConfirm(undefined)}
                 />
@@ -744,7 +916,7 @@ export function DiaryBookPage() {
                     )}
                     {confirm?.kind === 'entry' && confirm.row.index === row.index ? (
                       <InlineConfirm
-                        message={`确定删除《${row.title}》？只删除这一篇，不可撤销。`}
+                        message={`确定删除《${row.title}》？只删除这一篇，文字可从「历史」找回（图片除外）。`}
                         busy={busy === 'delete-entry'}
                         onConfirm={() => void removeEntry()}
                         onCancel={() => setConfirm(undefined)}
@@ -793,6 +965,16 @@ export function DiaryBookPage() {
             </article>
         </section>
       </div>
+      <DiaryHistoryDrawer
+        open={historyOpen}
+        presetId={presetId}
+        date={historyDate}
+        onClose={() => setHistoryOpen(false)}
+        onRestored={(date) => {
+          setSelected(date)
+          setMonth(date.slice(0, 7))
+        }}
+      />
     </div>
   )
 }

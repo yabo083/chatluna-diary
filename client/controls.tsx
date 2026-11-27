@@ -8,7 +8,7 @@ import {
 } from 'lucide-react'
 import './diary.css'
 
-function useDismiss(open: boolean, close: () => void, ref: React.RefObject<HTMLElement | null>) {
+export function useDismiss(open: boolean, close: () => void, ref: React.RefObject<HTMLElement | null>) {
   React.useEffect(() => {
     if (!open) return
     const onPointer = (event: MouseEvent) => {
